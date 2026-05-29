@@ -1,0 +1,15 @@
+Last field state:
+场上：[活] Charlie: 2HP 2手牌 [空城·守]  |  [亡] Alice: 0HP 0手牌 [空城·守]  |  [亡] Diana: 0HP 0手牌 [武圣]  |  [活] Bob: 3HP 3手牌 [空城·守]
+
+Index: 427, Player: Bob, Phase: play
+Last 5 responses:
+  [428] Bob phase=play: REASON: 本回合已使用过【杀】，且无其他有效行动
+CHOICE: 0
+  [426] Charlie phase=respond: REASON: 手牌2张闪，出闪后剩1张，无法触发空城，但3HP吃杀无致命危险，且保留闪可防后续伤害，空城状态留到更危急时使用更优
+CHOICE: 0
+  [424] Bob phase=play: REASON: 优先攻击敌人，减少其威胁
+CHOICE: 1
+  [422] Bob phase=play: REASON: 优先恢复体力，增加生存能力
+CHOICE: 3
+  [420] Charlie phase=play: REASON: 本回合已使用过杀，且空城技能下无需出闪，结束回合保留2张闪作为防御，同时手牌2张等于体力值无需弃牌。
+CHOICE: 0

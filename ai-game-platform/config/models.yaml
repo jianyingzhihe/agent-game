@@ -1,0 +1,232 @@
+# ============================================================
+#  AI Game Platform — Model Registry
+# ============================================================
+#  This file lists all available AI models and their configurations.
+#  You can manually edit this file to add/remove models or change
+#  default settings.  Changes take effect on next game launch.
+#
+#  How model selection works:
+#    - Each provider has one or more "models" (the actual API model IDs)
+#    - The player config string uses: provider:model_id:count
+#      Examples:  deepseek::2           → 2 players using default model
+#                 openai:gpt-5.3:1      → 1 player with specific model
+#                 dashscope:kimi-k2.6:1 → 1 player with specific model
+#    - If model_id is empty, the first model marked "default: true" is used
+# ============================================================
+
+providers:
+  # -- DeepSeek -------------------------------------------------
+  deepseek:
+    description: "DeepSeek models"
+    base_url: "https://api.deepseek.com"
+    api_key_env: DEEPSEEK_KEY
+    models:
+      - name: deepseek-v4-pro
+        label: "DeepSeek V4 Pro"
+        latest: true
+        default: true
+        note: "latest flagship, fast + strong reasoning"
+
+      - name: deepseek-chat
+        label: "DeepSeek V3/V4 (chat)"
+        note: "general-purpose chat model"
+
+      - name: deepseek-reasoner
+        label: "DeepSeek R1"
+        note: "dedicated reasoning model, slower"
+
+  # -- OpenAI (custom endpoint) ---------------------------------
+  openai:
+    description: "OpenAI GPT models"
+    base_url: "https://39.102.119.84/v1"
+    api_key_env: OPENAI_KEY
+    models:
+      - name: gpt-5.5
+        label: "GPT-5.5"
+        latest: true
+        note: "latest GPT, strongest all-rounder"
+
+      - name: gpt-5.4
+        label: "GPT-5.4"
+        default: true
+        note: "good balance of performance and cost"
+
+      - name: gpt-5.3
+        label: "GPT-5.3"
+
+      - name: gpt-5.2
+        label: "GPT-5.2"
+
+      - name: gpt-5.1
+        label: "GPT-5.1"
+
+      - name: gpt-4o
+        label: "GPT-4o"
+
+  # -- DashScope (阿里云百炼) -----------------------------------
+  #     Unified gateway for Qwen / Kimi / GLM / MiniMax
+  dashscope:
+    description: "Aliyun DashScope — Qwen / Kimi / GLM / MiniMax 统一网关"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: DASHSCOPE_KEY
+    models:
+      - name: qwen3.7-max
+        label: "Qwen 3.7 Max"
+        latest: true
+        default: true
+        note: "最新旗舰"
+
+      - name: qwen3.6-plus
+        label: "Qwen 3.6 Plus"
+        note: "平衡性能与成本"
+
+      - name: qwen3.6-flash
+        label: "Qwen 3.6 Flash"
+        note: "快速便宜版"
+
+      - name: qwen3.5-plus
+        label: "Qwen 3.5 Plus"
+        note: "上代旗舰, GatedDeltaNet 397B"
+
+      - name: qwen3-coder-plus
+        label: "Qwen3 Coder Plus"
+        note: "代码专用, 975K context"
+
+      - name: kimi-k2.6
+        label: "Kimi K2.6"
+        latest: true
+        note: "Moonshot Kimi, strong reasoning"
+
+      - name: kimi-k2-thinking
+        label: "Kimi K2 Thinking"
+        note: "Kimi with extended thinking"
+
+      - name: glm-5.1
+        label: "GLM 5.1"
+        latest: true
+        note: "Zhipu GLM latest generation"
+
+      - name: MiniMax/MiniMax-M2.7
+        label: "MiniMax M2.7"
+        latest: true
+        note: "MiniMax latest"
+
+  # -- Doubao (火山引擎方舟) ------------------------------------
+  doubao:
+    description: "ByteDance Doubao (Volcano Engine Ark)"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    api_key_env: DOUBAO_KEY
+    models:
+      - name: doubao-seed-2-0-pro-260215
+        label: "Doubao Seed 2.0 Pro"
+        default: true
+        latest: true
+        note: "ByteDance flagship"
+
+  # -- Qwen (direct DashScope) ----------------------------------
+  qwen:
+    description: "Alibaba Qwen (DashScope direct)"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: QWEN_KEY
+    models:
+      - name: qwen3.7-max
+        label: "Qwen 3.7 Max"
+        default: true
+        latest: true
+
+  # -- Zhipu (智谱) --------------------------------------------
+  zhipu:
+    description: "Zhipu GLM models"
+    base_url: "https://open.bigmodel.cn/api/paas/v4/"
+    api_key_env: ZHIPU_KEY
+    models:
+      - name: glm-4-flash
+        label: "GLM-4 Flash"
+        default: true
+
+  # -- Moonshot (月之暗面) --------------------------------------
+  moonshot:
+    description: "Moonshot Kimi models"
+    base_url: "https://api.moonshot.cn/v1"
+    api_key_env: MOONSHOT_KEY
+    models:
+      - name: moonshot-v1-8k
+        label: "Moonshot V1 8K"
+        default: true
+
+  # -- SiliconFlow ----------------------------------------------
+  siliconflow:
+    description: "SiliconFlow (multi-model gateway)"
+    base_url: "https://api.siliconflow.cn/v1"
+    api_key_env: SILICONFLOW_KEY
+    models:
+      - name: deepseek-ai/DeepSeek-V3
+        label: "DeepSeek V3 (SiliconFlow)"
+        default: true
+
+  # -- Groq -----------------------------------------------------
+  groq:
+    description: "Groq fast inference"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key_env: GROQ_KEY
+    models:
+      - name: llama-3.1-70b-versatile
+        label: "Llama 3.1 70B"
+        default: true
+
+  # -- Together AI ----------------------------------------------
+  together:
+    description: "Together AI"
+    base_url: "https://api.together.xyz/v1"
+    api_key_env: TOGETHER_KEY
+    models:
+      - name: meta-llama/Llama-3.3-70B-Instruct-Turbo
+        label: "Llama 3.3 70B Turbo"
+        default: true
+
+  # -- xAI ------------------------------------------------------
+  xai:
+    description: "xAI Grok models"
+    base_url: "https://api.x.ai/v1"
+    api_key_env: XAI_KEY
+    models:
+      - name: grok-2
+        label: "Grok 2"
+        default: true
+
+  # -- OpenRouter -----------------------------------------------
+  openrouter:
+    description: "OpenRouter (multi-model gateway)"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: OPENROUTER_KEY
+    models:
+      - name: openai/gpt-4o
+        label: "GPT-4o (via OpenRouter)"
+        default: true
+
+  # -- Google Gemini --------------------------------------------
+  gemini:
+    description: "Google Gemini models"
+    api_key_env: GEMINI_KEY
+    models:
+      - name: gemini-2.5-pro
+        label: "Gemini 2.5 Pro"
+        latest: true
+        note: "may use native Gemini API, not OpenAI-compatible"
+
+      - name: gemini-2.0-flash
+        label: "Gemini 2.0 Flash"
+        default: true
+
+# ============================================================
+#  Game Presets — quick-start player configs
+# ============================================================
+presets:
+  # 8-player free-for-all with all distinct models
+  sgs_8p_freeforall: "deepseek:deepseek-v4-pro:1,openai:gpt-5.4:1,dashscope:qwen3.7-max:1,dashscope:kimi-k2.6:1,dashscope:glm-5.1:1,dashscope:MiniMax/MiniMax-M2.7:1,doubao::1,deepseek:deepseek-reasoner:1"
+
+  # 8-player identity mode
+  sgs_8p_identity: "deepseek:deepseek-v4-pro:1,openai:gpt-5.4:1,dashscope:qwen3.7-max:1,dashscope:kimi-k2.6:1,dashscope:glm-5.1:1,dashscope:MiniMax/MiniMax-M2.7:1,doubao::1,deepseek:deepseek-reasoner:1"
+
+  # 5-player quick game
+  sgs_5p: "deepseek:deepseek-v4-pro:1,dashscope:qwen3.7-max:1,dashscope:kimi-k2.6:1,dashscope:glm-5.1:1,doubao::1"

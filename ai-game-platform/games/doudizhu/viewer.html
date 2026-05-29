@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>斗地主 — Game Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a5c36; color: #fff; font-family: 'Segoe UI', sans-serif; min-height: 100vh; padding: 20px; }
+h1 { text-align: center; margin-bottom: 20px; font-size: 28px; }
+.player-area { background: rgba(0,0,0,0.3); border-radius: 12px; padding: 16px; margin: 10px 0; }
+.player-name { font-size: 18px; font-weight: bold; margin-bottom: 8px; }
+.player-role { font-size: 13px; opacity: 0.8; }
+.cards { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.card {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 52px; height: 72px; border-radius: 6px; font-size: 16px; font-weight: bold;
+  background: #fff; color: #000; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);
+  position: relative; user-select: none;
+}
+.card.red { color: #d00; }
+.card.joker-red { background: #ffe0e0; color: #d00; }
+.card.joker-black { background: #e0e0e0; color: #333; }
+.play-zone { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin: 12px 0; text-align: center; min-height: 80px; }
+.play-label { font-size: 12px; opacity: 0.6; margin-bottom: 4px; }
+.log { max-height: 300px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-top: 16px; font-size: 13px; line-height: 1.6; }
+.log-entry { padding: 2px 0; }
+.log-entry.highlight { color: #ff0; }
+.controls { text-align: center; margin: 16px 0; }
+button { background: #fff; color: #0a5c36; border: none; padding: 8px 20px; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; margin: 0 4px; }
+button:hover { background: #e0e0e0; }
+input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<h1>♠♥♦♣ 斗地主 Viewer ♣♦♥♠</h1>
+<div class="controls">
+  <button onclick="document.getElementById('fileInput').click()">📂 Load game.jsonl</button>
+  <input type="file" id="fileInput" accept=".jsonl" onchange="loadFile(event)">
+  <button onclick="prevStep()">◀ Prev</button>
+  <span id="stepInfo" style="margin: 0 12px;">Step 0 / 0</span>
+  <button onclick="nextStep()">Next ▶</button>
+</div>
+
+<div id="players"></div>
+<div class="play-zone" id="playZone">
+  <div class="play-label">TABLE</div>
+  <div class="cards" id="tableCards"></div>
+</div>
+<div class="log" id="log"></div>
+
+<script>
+let steps = [];
+let currentStep = -1;
+
+function loadFile(event) {
+  const file = event.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    steps = e.target.result.trim().split('\n').map(JSON.parse);
+    currentStep = 0;
+    render();
+  };
+  reader.readAsText(file);
+}
+
+function nextStep() {
+  if (currentStep < steps.length - 1) { currentStep++; render(); }
+}
+function prevStep() {
+  if (currentStep > 0) { currentStep--; render(); }
+}
+
+function render() {
+  if (steps.length === 0) return;
+  const step = steps[currentStep];
+  document.getElementById('stepInfo').textContent = `Step ${currentStep + 1} / ${steps.length}`;
+
+  // Collect all state up to this step
+  let players = {};
+  let tableCards = [];
+  let log = [];
+
+  for (let i = 0; i <= currentStep; i++) {
+    const s = steps[i];
+    if (s.type === 'game_start') {
+      players = {};
+      s.players.forEach(p => {
+        players[p.name] = { role: p.role, hand: parseCards(p.hand), model: p.model || '' };
+      });
+    }
+    if (s.type === 'prompt' && s.phase === 'play') {
+      // Try to extract hand from prompt
+    }
+    if (s.type === 'response' && s.phase === 'play') {
+      const play = s.parsed?.play || '';
+      if (play && play !== 'PASS') {
+        tableCards = parseCards(play);
+        log.push(`${s.player} played: ${play}`);
+      } else if (play === 'PASS') {
+        tableCards = [];
+        log.push(`${s.player}: PASS`);
+      }
+      // Update hand
+      if (players[s.player] && play !== 'PASS') {
+        // Remove played cards from hand
+        const played = parseCards(play);
+        players[s.player].hand = players[s.player].hand.filter(
+          c => !played.some(p => p.rank === c.rank && p.suit === c.suit)
+        );
+      }
+    }
+  }
+
+  // Render
+  const container = document.getElementById('players');
+  container.innerHTML = Object.entries(players).map(([name, p]) => `
+    <div class="player-area">
+      <div class="player-name">${name} <span class="player-role">${p.role}</span></div>
+      <div class="cards">${p.hand.map(c => cardHTML(c)).join('')}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('tableCards').innerHTML = tableCards.map(c => cardHTML(c)).join('');
+  document.getElementById('log').innerHTML = log.map(l => `<div class="log-entry">${l}</div>`).join('');
+}
+
+function parseCards(str) {
+  if (!str) return [];
+  // Handle formats: "3♠ 5♥" or "[Card('3','♠'), ...]"
+  if (str.startsWith('[')) {
+    try {
+      const arr = JSON.parse(str.replace(/'/g, '"').replace(/Card\(/g, '[').replace(/\)/g, ']'));
+      return arr.map(c => ({ rank: c[0], suit: c[1] }));
+    } catch(e) { return []; }
+  }
+  // Simple space-separated format
+  return str.split(/[,\s]+/).filter(Boolean).map(token => {
+    token = token.trim();
+    if (token === '小王') return { rank: '🃏', suit: 'red', isJoker: true };
+    if (token === '大王') return { rank: '🃏', suit: 'black', isJoker: true };
+    const match = token.match(/^(\d+|[JQKA2])([♠♥♦♣])$/);
+    if (match) return { rank: match[1], suit: match[2] };
+    return { rank: token, suit: '' };
+  });
+}
+
+function cardHTML(c) {
+  const isRed = c.suit === '♥' || c.suit === '♦' || (c.isJoker && c.suit === 'red');
+  const cls = c.isJoker ? (isRed ? 'joker-red' : 'joker-black') : (isRed ? 'red' : '');
+  return `<div class="card ${cls}">${c.rank}${c.suit}</div>`;
+}
+</script>
+</body>
+</html>
