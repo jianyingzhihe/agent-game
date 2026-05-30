@@ -239,6 +239,7 @@ let currentSession = null;
 let viewerSteps = [], viewerIdx = -1, viewerPlayers = {}, viewerEntries = [], viewerMeta = {};
 let viewerTimer = null, viewerType = '';
 let httpMode = false;
+let sessionLoadToken = 0;
 
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -249,21 +250,30 @@ function esc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function selectGame(game){
-  selectedGame = game;
-  const names={werewolf:'狼人杀',avalon:'阿瓦隆',doudizhu:'斗地主',texas:'德州扑克',codenames:'谍报',sanguosha:'三国杀'};
-  document.getElementById('pickerTitle').textContent = game ? ('加载 ' + (names[game]||game) + ' 日志') : '加载全部游戏日志';
-  showScreen('screenPickLog');
-  if(httpMode) loadSessionsHTTP();
-  else document.getElementById('sessionEmpty').textContent = '请选择 logs 文件夹';
+function normalizeGameType(gameType){
+  const gt = String(gameType || '').toLowerCase().trim();
+  if(!gt) return 'unknown';
+  if(gt === 'texas_holdem' || gt === 'texas' || gt === 'poker') return 'texas';
+  if(gt === 'sgs') return 'sanguosha';
+  return gt;
 }
 
-async function initMode(){
-  const isHTTP = location.protocol === 'http:' || location.protocol === 'https:';
-  httpMode = isHTTP;
-  document.getElementById('actionsHTTP').style.display = isHTTP ? 'flex' : 'none';
-  document.getElementById('actionsFile').style.display = isHTTP ? 'none' : 'flex';
-  document.getElementById('modeBadge').style.display = isHTTP ? 'inline-block' : 'none';
+function setSessionListMessage(text){
+  document.getElementById('sessionList').innerHTML = '<div class="empty-state" id="sessionEmpty">'+esc(text)+'</div>';
+}
+
+function selectGame(game){
+  selectedGame = normalizeGameType(game);
+  sessionLoadToken += 1;
+  const names={werewolf:'狼人杀',avalon:'阿瓦隆',doudizhu:'斗地主',texas:'德州扑克',codenames:'谍报',sanguosha:'三国杀'};
+  document.getElementById('pickerTitle').textContent = selectedGame ? ('加载 ' + (names[selectedGame]||selectedGame) + ' 日志') : '加载全部游戏日志';
+  showScreen('screenPickLog');
+  allSessions = [];
+  setSessionListMessage('正在加载...');
+  if(httpMode) loadSessionsHTTP(sessionLoadToken);
+  else {
+    setSessionListMessage('请选择 logs 文件夹');
+  }
 }
 
 async function fetchJSON(url, timeoutMs=5000){
@@ -279,36 +289,40 @@ async function fetchJSON(url, timeoutMs=5000){
   }
 }
 
-async function loadSessionsHTTP(){
-  document.getElementById('sessionEmpty').textContent = '正在加载...';
+async function loadSessionsHTTP(loadToken){
+  setSessionListMessage('正在加载...');
   let data = await fetchJSON('/api/logs', 3000);
   if(!data) data = await fetchJSON('logs/index.json', 3000);
+  if(loadToken !== sessionLoadToken) return;
   if(!data){
-    document.getElementById('sessionEmpty').textContent = '未找到日志，可运行 python serve.py 或手动选择文件。';
     document.getElementById('actionsHTTP').style.display = 'none';
     document.getElementById('actionsFile').style.display = 'flex';
     httpMode = false;
+    setSessionListMessage('未找到日志，可运行 python serve.py 或手动选择文件。');
     return;
   }
   allSessions = [];
   for(const s of data){
-    const gt = s.gameType || s.game_type || 'unknown';
+    const gt = normalizeGameType(s.gameType || s.game_type || s.summary?.game_type || 'unknown');
     if(selectedGame && gt !== selectedGame) continue;
     allSessions.push({
       id: s.id,
       dir: s.id,
       gameType: gt,
-      summary: s.summary || (s.players ? {players:s.players,winner:s.winner,total_rounds:s.total_rounds,session_id:s.id} : null),
+      summary: s.summary || (s.players ? {players:s.players,winner:s.winner,total_rounds:s.total_rounds,session_id:s.id,game_type:gt} : null),
       jsonlPath: s.jsonl_path || (s.id+'/game.jsonl'),
       httpFetch: true
     });
   }
   renderSessionList();
-  if(!allSessions.length) document.getElementById('sessionEmpty').textContent = '没有找到匹配的日志。';
+  if(!allSessions.length){
+    setSessionListMessage('没有找到匹配的日志。');
+  }
 }
 
 function backToGames(){
   if(viewerTimer){clearInterval(viewerTimer);viewerTimer=null;}
+  sessionLoadToken += 1;
   showScreen('screenPickGame');
 }
 
@@ -323,17 +337,21 @@ function pickSingleFile(){
 }
 
 function detectGameType(summary){
+  const byField = normalizeGameType(summary?.game_type || summary?.config?.game_type || '');
+  if(byField !== 'unknown') return byField;
   if(!summary||!summary.players||!summary.players.length) return 'unknown';
   const roles = summary.players.map(p=>(p.role||'').toLowerCase()).join(' ');
   if(/werewolf|seer|witch|hunter/.test(roles)) return 'werewolf';
   if(/merlin|assassin|morgana|percival|servant|mordred/.test(roles)) return 'avalon';
   if(/landlord|farmer/.test(roles)) return 'doudizhu';
   if(/unlim|swap|wound_draw|wound_steal|empty_draw|empty_immune|blood_draw/.test(roles)) return 'sanguosha';
+  if((summary?.game_type || '').toLowerCase().includes('texas')) return 'texas';
+  if((summary?.game_type || '').toLowerCase().includes('codenames')) return 'codenames';
   return 'unknown';
 }
 
 function handleFolderSelect(evt){
-  document.getElementById('sessionEmpty').textContent = '正在扫描...';
+  setSessionListMessage('正在扫描...');
   const files = Array.from(evt.target.files||[]);
   if(!files.length) return;
   setTimeout(async ()=>{
@@ -352,7 +370,7 @@ function handleFolderSelect(evt){
       if(!entry.jsonl) return;
       let summary = null;
       if(entry.summary){ try{ summary = JSON.parse(await entry.summary.text()); }catch(e){} }
-      const gt = detectGameType(summary);
+      const gt = normalizeGameType(detectGameType(summary));
       if(selectedGame && gt !== selectedGame) return;
       allSessions.push({id:key,dir:key,gameType:gt,summary,jsonlFile:entry.jsonl,httpFetch:false});
     });
@@ -376,7 +394,10 @@ function handleSingleFile(evt){
       else if(/merlin|assassin|morgana/.test(both)) gt='avalon';
       else if(/landlord|farmer/.test(both)) gt='doudizhu';
       else if(/unlim|swap|wound_draw|wound_steal|empty_draw|empty_immune|blood_draw/.test(both)) gt='sanguosha';
+      else if(/texas|holdem|poker/.test((gs.game_type||'').toLowerCase())) gt='texas';
+      else if(/codenames/.test((gs.game_type||'').toLowerCase())) gt='codenames';
     }
+    gt = normalizeGameType(gt);
     allSessions = [{id:'single',dir:file.name,gameType:gt,summary:null,rawSteps:steps,httpFetch:false}];
     renderSessionList();
   };
@@ -386,7 +407,8 @@ function handleSingleFile(evt){
 function renderSessionList(){
   const el = document.getElementById('sessionList');
   if(!allSessions.length){
-    el.innerHTML = '<div class="empty-state">'+document.getElementById('sessionEmpty').textContent+'</div>';
+    const currentMessage = document.getElementById('sessionEmpty')?.textContent || '没有找到匹配的日志。';
+    el.innerHTML = '<div class="empty-state" id="sessionEmpty">'+esc(currentMessage)+'</div>';
     return;
   }
   const badges={werewolf:'🐺 狼人杀',avalon:'🗡️ 阿瓦隆',doudizhu:'🃏 斗地主',texas:'♠️ 德州',codenames:'🔍 谍报',sanguosha:'⚔️ 三国杀',unknown:'未知'};
@@ -411,10 +433,18 @@ function renderSessionList(){
   }).join('');
 }
 
+async function initMode(){
+  const isHTTP = location.protocol === 'http:' || location.protocol === 'https:';
+  httpMode = isHTTP;
+  document.getElementById('actionsHTTP').style.display = isHTTP ? 'flex' : 'none';
+  document.getElementById('actionsFile').style.display = isHTTP ? 'none' : 'flex';
+  document.getElementById('modeBadge').style.display = isHTTP ? 'inline-block' : 'none';
+}
+
 async function openSession(idx){
   const sess = allSessions[idx];
   currentSession = sess;
-  viewerType = sess.gameType;
+  viewerType = normalizeGameType(sess.gameType);
   if(sess.httpFetch){
     try{
       const resp = await fetch(sess.jsonlPath);
@@ -434,7 +464,7 @@ async function openSession(idx){
   viewerEntries = [];
   viewerMeta = {};
   if(viewerTimer){clearInterval(viewerTimer);viewerTimer=null;}
-  document.getElementById('viewerTitle').textContent = `${sess.dir} - ${sess.gameType}`;
+  document.getElementById('viewerTitle').textContent = `${sess.dir} - ${viewerType}`;
   showScreen('screenViewer');
   viewerRebuild();
   viewerRender();
@@ -442,6 +472,7 @@ async function openSession(idx){
 
 function backToLogs(){
   if(viewerTimer){clearInterval(viewerTimer);viewerTimer=null;}
+  sessionLoadToken += 1;
   showScreen('screenPickLog');
 }
 function viewerPrev(){if(viewerIdx>0){viewerIdx--;viewerRebuild();viewerRender();}}
