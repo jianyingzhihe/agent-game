@@ -3,14 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>狼人杀 — Game Viewer</title>
+<title>Werewolf Viewer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#12121f;color:#d0d0d8;font-family:'Segoe UI','Microsoft YaHei',sans-serif;min-height:100vh;padding:14px 18px}
 h1{text-align:center;font-size:22px;letter-spacing:1px}
-.subtitle{text-align:center;opacity:.4;font-size:11px;margin-bottom:12px}
-
-/* ── Controls ── */
+.subtitle{text-align:center;opacity:.55;font-size:11px;margin-bottom:12px}
 .controls{text-align:center;margin:8px 0 10px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
 button{background:#d4455a;color:#fff;border:none;padding:6px 14px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
 button:hover{background:#b8384a}
@@ -18,22 +16,15 @@ button.small{padding:4px 10px;font-size:10px;background:#444;font-weight:400}
 button.small:hover{background:#666}
 #stepInfo{font-size:13px;min-width:80px;color:#aaa}
 .phase-badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:11px;font-weight:bold;letter-spacing:.5px}
-.phase-badge.night{background:#1e2960;color:#889}
-.phase-badge.day{background:#604a1e;color:#cca}
-.phase-badge.vote{background:#601e1e;color:#e88}
+.phase-badge.night{background:#1e2960;color:#ccd6ff}
+.phase-badge.day{background:#604a1e;color:#ffe3b3}
+.phase-badge.vote{background:#601e1e;color:#ffc2c8}
 input[type=file]{display:none}
-
-/* ── Result banner ── */
 .result-banner{text-align:center;font-size:20px;font-weight:bold;padding:10px;margin:6px 0;border-radius:8px}
 .result-banner.good{background:rgba(69,210,100,.12);color:#4cd268}
 .result-banner.evil{background:rgba(220,60,90,.12);color:#e8506a}
-
-/* ── Main layout ── */
-.main-layout{display:flex;gap:12px;height:calc(100vh - 155px);min-height:480px;margin-top:6px}
-
-/* ── Left: faction column ── */
-.faction-column{width:265px;min-width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:7px;overflow-y:auto}
-
+.main-layout{display:flex;gap:12px;height:calc(100vh - 155px);min-height:520px;margin-top:6px}
+.faction-column{width:280px;min-width:230px;flex-shrink:0;display:flex;flex-direction:column;gap:7px;overflow-y:auto}
 .faction-panel{border-radius:8px;padding:7px 8px;background:rgba(255,255,255,.025)}
 .faction-panel h4{font-size:11px;margin-bottom:5px;text-align:center;padding:3px 0;border-radius:3px;letter-spacing:.4px;font-weight:600}
 .faction-panel.gods{border:1px solid rgba(212,180,60,.22)}
@@ -42,35 +33,27 @@ input[type=file]{display:none}
 .faction-panel.vills h4{background:rgba(60,200,100,.12);color:#46d470}
 .faction-panel.wolves{border:1px solid rgba(210,55,80,.22)}
 .faction-panel.wolves h4{background:rgba(210,55,80,.12);color:#e04862}
-
 .player-card{background:rgba(0,0,0,.18);border-radius:7px;padding:7px 8px;margin-bottom:4px;position:relative;transition:.2s}
 .player-card.dead{opacity:.3}
-.player-card.dead::after{content:'💀';position:absolute;top:3px;right:6px;font-size:13px}
+.player-card.dead::after{content:'×';position:absolute;top:3px;right:6px;font-size:13px}
 .player-name{font-size:13px;font-weight:600;margin-bottom:1px}
 .player-model{font-size:9px;opacity:.35;margin-bottom:2px}
 .player-role{font-size:10px;font-weight:700}
 .player-card.gods .player-role{color:#d4b43c}
 .player-card.vill .player-role{color:#46d470}
 .player-card.wolf .player-role{color:#e04862}
-.player-card .action-tag{font-size:9px;opacity:.55;margin-top:2px;line-height:1.3}
-.player-card .think-hint{font-size:8px;opacity:.28;margin-top:2px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
-
+.player-card .action-tag{font-size:9px;opacity:.7;margin-top:2px;line-height:1.3}
+.player-card .think-hint{font-size:8px;opacity:.3;margin-top:2px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.player-card .read-row{font-size:8px;opacity:.45;margin-top:2px;line-height:1.35}
 .empty-hint{font-size:10px;opacity:.25;text-align:center;padding:10px;font-style:italic}
-
-/* ── Right: dialog ── */
 .dialog-column{flex:1;display:flex;flex-direction:column;min-width:0;gap:8px}
-
 .view-tabs{display:flex;gap:4px;flex-shrink:0}
 .view-tab{padding:3px 12px;font-size:11px;background:rgba(255,255,255,.05);border-radius:4px 4px 0 0;cursor:pointer;opacity:.45;transition:.15s;border:1px solid transparent;border-bottom:none;font-weight:500}
 .view-tab.active{background:rgba(255,255,255,.1);opacity:1;border-color:rgba(255,255,255,.1)}
 .view-tab:hover{opacity:.75}
-
-.dialog-panel{flex:1;background:rgba(255,255,255,.025);border-radius:0 8px 8px 8px;padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
-.dialog-panel h4{font-size:11px;opacity:.4;margin-bottom:2px;position:sticky;top:0;background:#12121f;padding:3px 0;z-index:2}
-.log-panel{display:none;flex:1;background:rgba(255,255,255,.025);border-radius:0 8px 8px 8px;padding:8px 10px;overflow-y:auto}
-.log-panel h4{font-size:11px;opacity:.4;margin-bottom:6px;position:sticky;top:0;background:#12121f;padding:3px 0;z-index:2}
-
-/* ── Chat bubbles ── */
+.dialog-panel,.log-panel,.analysis-panel{flex:1;background:rgba(255,255,255,.025);border-radius:0 8px 8px 8px;padding:10px;overflow-y:auto}
+.log-panel,.analysis-panel{display:none}
+.dialog-panel h4,.log-panel h4,.analysis-panel h4{font-size:11px;opacity:.45;margin-bottom:6px;position:sticky;top:0;background:#12121f;padding:3px 0;z-index:2}
 .chat-bubble{max-width:86%;padding:7px 10px;border-radius:10px;font-size:12px;line-height:1.5;animation:fadeIn .25s}
 .chat-bubble.left{align-self:flex-start;background:rgba(255,255,255,.06);border-bottom-left-radius:3px}
 .chat-bubble .bbl-header{font-size:10px;font-weight:600;margin-bottom:2px;display:flex;gap:4px;align-items:baseline}
@@ -78,81 +61,90 @@ input[type=file]{display:none}
 .chat-bubble .bbl-dead{font-size:9px;opacity:.4;margin-left:2px}
 .chat-bubble .bbl-speech{color:#ccc}
 .chat-bubble .bbl-think{font-size:9px;opacity:.3;margin-top:4px;font-style:italic;border-top:1px solid rgba(255,255,255,.05);padding-top:3px}
+.chat-bubble .bbl-reads{font-size:9px;opacity:.45;margin-top:4px}
 .chat-bubble.gods .bbl-header .bbl-name{color:#d4b43c}
 .chat-bubble.vill .bbl-header .bbl-name{color:#46d470}
 .chat-bubble.wolf .bbl-header .bbl-name{color:#e04862}
-
-/* ── System messages ── */
 .msg{text-align:center;font-size:10px;opacity:.38;padding:3px 0;line-height:1.5}
-.msg.kill{color:#e04862;opacity:.65;font-weight:600}
-.msg.save{color:#46d470;opacity:.65;font-weight:600}
-.msg.vote{color:#d4b43c;opacity:.6}
-.msg.round{opacity:.2;font-size:10px;font-weight:700;letter-spacing:.5px}
-.msg.night-group{font-size:10px;opacity:.35;padding:4px 0;text-align:left;margin:2px 0;font-style:italic}
-
+.msg.kill{color:#e04862;opacity:.7;font-weight:600}
+.msg.save{color:#46d470;opacity:.7;font-weight:600}
+.msg.vote{color:#d4b43c;opacity:.7}
+.msg.round{opacity:.24;font-size:10px;font-weight:700;letter-spacing:.5px}
+.msg.night-group{font-size:10px;opacity:.38;padding:4px 0;text-align:left;margin:2px 0;font-style:italic}
+.msg.runoff{color:#ffc66d;opacity:.75;font-weight:600}
+.msg.last{color:#7fd7ff;opacity:.75;font-weight:600}
+.msg.analysis{color:#a8b0ff;opacity:.7}
 .log-entry{font-size:10px;padding:2px 0;line-height:1.5;border-bottom:1px solid rgba(255,255,255,.025)}
 .log-entry.kill{color:#e04862}
 .log-entry.save{color:#46d470}
 .log-entry.vote{color:#d4b43c}
 .log-entry.info{opacity:.4}
-
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:12px}
+.metric-card{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.05);border-radius:8px;padding:10px}
+.metric-card .k{font-size:10px;opacity:.5;margin-bottom:4px}
+.metric-card .v{font-size:18px;font-weight:700}
+.analysis-section{margin-bottom:14px}
+.analysis-section h5{font-size:11px;opacity:.6;margin-bottom:6px}
+.analysis-list{font-size:11px;line-height:1.6;opacity:.9}
+.analysis-list div{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)}
 @keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-
-@media(max-width:700px){
+@media(max-width:900px){
   .main-layout{flex-direction:column;height:auto}
   .faction-column{width:100%;flex-direction:row;flex-wrap:wrap;gap:5px}
-  .faction-panel{flex:1;min-width:100px}
+  .faction-panel{flex:1;min-width:120px}
 }
 </style>
 </head>
 <body>
-<h1>🐺 狼人杀 Viewer</h1>
-<div class="subtitle">加载 game.jsonl — 神 / 村民 / 狼人 三阵营 + 对话回放</div>
+<h1>Werewolf Viewer</h1>
+<div class="subtitle">Load game.jsonl to replay discussion, vote flow, and night analysis.</div>
 
 <div class="controls">
-  <button onclick="document.getElementById('fileInput').click()">📂 Load</button>
+  <button onclick="document.getElementById('fileInput').click()">Load</button>
   <input type="file" id="fileInput" accept=".jsonl" onchange="loadFile(event)">
-  <button onclick="prev()">◀</button>
+  <button onclick="prev()">Prev</button>
   <span id="stepInfo">-</span>
-  <button onclick="next()">▶</button>
-  <button class="small" onclick="autoPlay()">▶▶ Auto</button>
-  <button class="small" onclick="jumpEnd()">⏭ End</button>
+  <button onclick="next()">Next</button>
+  <button class="small" onclick="autoPlay()">Auto</button>
+  <button class="small" onclick="jumpEnd()">End</button>
   <span id="phaseLabel" class="phase-badge night"></span>
 </div>
 
 <div id="result"></div>
 
 <div class="main-layout">
-  <!-- Left: factions -->
   <div class="faction-column">
-    <div class="faction-panel gods" id="panelGods"><h4>🔮 神阵营</h4><div id="cardsGods"></div></div>
-    <div class="faction-panel vills" id="panelVills"><h4>👤 村民阵营</h4><div id="cardsVills"></div></div>
-    <div class="faction-panel wolves" id="panelWolves"><h4>🐺 狼人阵营</h4><div id="cardsWolves"></div></div>
+    <div class="faction-panel gods" id="panelGods"><h4>God Roles</h4><div id="cardsGods"></div></div>
+    <div class="faction-panel vills" id="panelVills"><h4>Villagers</h4><div id="cardsVills"></div></div>
+    <div class="faction-panel wolves" id="panelWolves"><h4>Werewolves</h4><div id="cardsWolves"></div></div>
   </div>
 
-  <!-- Right: dialog / log -->
   <div class="dialog-column">
     <div class="view-tabs">
-      <span class="view-tab active" id="tabDialog" onclick="switchView('dialog')">💬 对话流</span>
-      <span class="view-tab" id="tabLog" onclick="switchView('log')">📋 事件日志</span>
+      <span class="view-tab active" id="tabDialog" onclick="switchView('dialog')">Dialog</span>
+      <span class="view-tab" id="tabLog" onclick="switchView('log')">Timeline</span>
+      <span class="view-tab" id="tabAnalysis" onclick="switchView('analysis')">Analysis</span>
     </div>
     <div class="dialog-panel" id="dialogPanel">
-      <h4>📜 游戏过程</h4>
+      <h4>Conversation Replay</h4>
       <div id="dialogContent"></div>
     </div>
     <div class="log-panel" id="logPanel">
-      <h4>📋 事件日志</h4>
+      <h4>Event Timeline</h4>
       <div id="logContent"></div>
+    </div>
+    <div class="analysis-panel" id="analysisPanel">
+      <h4>Structured Analysis</h4>
+      <div id="analysisContent"></div>
     </div>
   </div>
 </div>
 
 <script>
-// ── State ──
 let steps=[], current=-1, players={}, dialogEntries=[], autoTimer=null, currentView='dialog';
+let sessionSummary={voteHistory:[], daySpeechHistory:[], suspicionReads:[], trustReads:[], claims:[], keyEvents:[]};
 const GOD_KEYS=['seer','witch','hunter'];
 
-// ── Role ID extraction ──
 function extractRoleId(roleStr){
   const s=(roleStr||'').toLowerCase();
   if(s.includes('werewolf')||s.includes('狼人')) return 'werewolf';
@@ -162,7 +154,6 @@ function extractRoleId(roleStr){
   return 'villager';
 }
 
-// ── Faction grouping ──
 function getFactionCSS(p){
   if(p.faction==='werewolf') return 'wolf';
   if(p.role_id && GOD_KEYS.includes(p.role_id)) return 'gods';
@@ -174,13 +165,12 @@ function getFactionGroup(p){
   return 'vills';
 }
 
-// ── Load ──
 function loadFile(e){
   const f=e.target.files[0];
   const r=new FileReader();
   r.onload=ev=>{
     try{
-      steps=ev.target.result.trim().split('\n').map(l=>JSON.parse(l));
+      steps=ev.target.result.trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
     }catch(err){
       alert('JSONL parse error: '+err.message); return;
     }
@@ -190,7 +180,6 @@ function loadFile(e){
   r.readAsText(f);
 }
 
-// ── Navigation ──
 function prev(){if(current>0){current--;rebuild();render()}}
 function next(){if(current<steps.length-1){current++;rebuild();render()}}
 function jumpEnd(){current=steps.length-1;rebuild();render()}
@@ -206,18 +195,20 @@ function switchView(view){
   currentView=view;
   document.getElementById('tabDialog').classList.toggle('active',view==='dialog');
   document.getElementById('tabLog').classList.toggle('active',view==='log');
+  document.getElementById('tabAnalysis').classList.toggle('active',view==='analysis');
   document.getElementById('dialogPanel').style.display=view==='dialog'?'flex':'none';
   document.getElementById('logPanel').style.display=view==='log'?'block':'none';
+  document.getElementById('analysisPanel').style.display=view==='analysis'?'block':'none';
 }
 
-// ── Rebuild state up to `current` ──
 function rebuild(){
-  players={}; dialogEntries=[];
+  players={};
+  dialogEntries=[];
+  sessionSummary={voteHistory:[], daySpeechHistory:[], suspicionReads:[], trustReads:[], claims:[], keyEvents:[]};
 
   for(let i=0;i<=current;i++){
     const s=steps[i];
 
-    // game_start
     if(s.type==='game_start'){
       s.players.forEach(p=>{
         const rid=extractRoleId(p.role);
@@ -231,117 +222,161 @@ function rebuild(){
           persona:p.persona||'',
           think:'',
           speech:'',
-          action:''
+          action:'',
+          suspect:'none',
+          trust:'none',
+          claim:'none',
+          plan:''
         };
       });
-      dialogEntries.push({t:'msg',c:'round',txt:'🎮 游戏开始 — 暗中分配身份中...'});
+      dialogEntries.push({t:'msg',c:'round',txt:'Game start. Roles have been assigned in secret.'});
     }
 
-    // round_start
     if(s.type==='round_start'){
-      dialogEntries.push({t:'msg',c:'round',txt:`━━━ Round ${s.round} ━━━`});
+      dialogEntries.push({t:'msg',c:'round',txt:`Round ${s.round}`});
     }
 
-    // response
     if(s.type==='response'){
       const p=players[s.player];
       if(!p) continue;
       const ph=s.phase||'';
       const pa=s.parsed||{};
+      p.think=pa.reason||p.think;
+      p.suspect=pa.suspect||p.suspect;
+      p.trust=pa.trust||p.trust;
+      p.claim=pa.claim||p.claim;
+      p.plan=pa.plan||p.plan;
 
-      if(ph==='day_discussion'){
+      if(pa.suspect && pa.suspect!=='none'){
+        sessionSummary.suspicionReads.push(`${s.player} suspects ${pa.suspect} (${ph})`);
+      }
+      if(pa.trust && pa.trust!=='none'){
+        sessionSummary.trustReads.push(`${s.player} trusts ${pa.trust} (${ph})`);
+      }
+      if(pa.claim && pa.claim!=='none'){
+        sessionSummary.claims.push(`${s.player} claims ${pa.claim} (${ph})`);
+      }
+
+      if(ph==='day_discussion' || ph==='day_final_statement' || ph==='day_runoff_discussion' || ph==='day_last_words'){
         p.speech=pa.speech||'';
-        p.think=pa.reason||'';
         const fc=getFactionCSS(p);
+        const labelMap={
+          day_discussion:'discussion',
+          day_final_statement:'final',
+          day_runoff_discussion:'runoff',
+          day_last_words:'last words'
+        };
         dialogEntries.push({
           t:'speech',c:fc,
           name:s.player,role:p.role,
           speech:pa.speech||'',
           think:pa.reason||'',
-          dead:!p.alive
+          dead:!p.alive,
+          meta:`${labelMap[ph]||ph} | suspect=${pa.suspect||'none'} | trust=${pa.trust||'none'} | claim=${pa.claim||'none'}`
         });
+        sessionSummary.daySpeechHistory.push(`${s.player} [${labelMap[ph]||ph}]: ${pa.speech||''}`);
       }
-      if(ph==='day_vote'){
+
+      if(ph==='day_vote' || ph==='day_runoff_vote'){
         const vt=pa.vote||'?';
-        p.action='VOTE → '+vt;
-        p.think=pa.reason||'';
-        dialogEntries.push({t:'msg',c:'info',txt:`🗳 ${s.player} 投票给 ${vt}`});
+        p.action='VOTE -> '+vt;
+        dialogEntries.push({t:'msg',c:'vote',txt:`${s.player} votes ${vt}${ph==='day_runoff_vote'?' (runoff)':''}`});
       }
+
       if(ph==='hunter_shot'){
-        p.action='SHOOT → '+(pa.target||'?');
-        p.think=pa.reason||'';
-        dialogEntries.push({t:'msg',c:'kill',txt:`💀 猎人 ${s.player} 开枪带走 ${pa.target||'?'}`});
+        p.action='SHOOT -> '+(pa.target||'?');
+        dialogEntries.push({t:'msg',c:'kill',txt:`Hunter ${s.player} aims at ${pa.target||'none'}`});
       }
       if(ph==='night_werewolf'){
-        p.action='KILL → '+(pa.target||'?');
-        p.think=pa.reason||'';
-        dialogEntries.push({t:'msg',c:'night',txt:`🌙 狼人 ${s.player} 选择击杀 ${pa.target||'?'}`});
+        p.action='KILL -> '+(pa.target||'?');
+        dialogEntries.push({t:'msg',c:'night',txt:`Werewolf ${s.player} suggests kill ${pa.target||'?'}`});
       }
       if(ph==='night_seer'){
-        p.action='CHECK → '+(pa.target||'?');
-        p.think=pa.reason||'';
-        dialogEntries.push({t:'msg',c:'night',txt:`🔮 预言家 ${s.player} 查验 ${pa.target||'?'}`});
+        p.action='CHECK -> '+(pa.target||'?');
+        dialogEntries.push({t:'msg',c:'night',txt:`Seer ${s.player} checks ${pa.target||'?'}`});
       }
       if(ph==='night_witch'){
-        p.think=pa.reason||'';
         const sv=(pa.save||'no').toLowerCase();
         const po=(pa.poison||'none').toLowerCase();
         p.action=`SAVE:${sv} POISON:${po}`;
-        let wmsg=`🧪 女巫 ${s.player}`;
+        let wmsg=`Witch ${s.player}`;
         const acts=[];
-        if(sv==='yes') acts.push('使用解药救人');
-        if(po!=='none') acts.push(`毒杀 ${po}`);
-        if(acts.length) wmsg+=': '+acts.join('，');
-        else wmsg+=': 不使用药水';
+        if(sv==='yes') acts.push('uses antidote');
+        if(po!=='none') acts.push(`poisons ${po}`);
+        if(acts.length) wmsg+=': '+acts.join(', ');
+        else wmsg+=': holds both actions';
         dialogEntries.push({t:'msg',c:(po!=='none'?'kill':'night'),txt:wmsg});
       }
     }
 
-    // round_end
     if(s.type==='round_end'){
-      const nd=(s.night||{}).deaths||[];
+      const night=s.night||{};
+      const day=s.day||{};
+      const nd=night.deaths||[];
       nd.forEach(d=>{
         if(players[d]) players[d].alive=false;
-        dialogEntries.push({t:'msg',c:'kill',txt:`💀 ${d} 昨夜死亡`});
+        dialogEntries.push({t:'msg',c:'kill',txt:`${d} died during the night`});
       });
-      const ed=(s.day||{}).vote||{};
-      if(ed.eliminated){
-        if(players[ed.eliminated]) players[ed.eliminated].alive=false;
-        const cnt=ed.vote_counts||{};
-        const vc=cnt[ed.eliminated]||0;
-        dialogEntries.push({t:'msg',c:'vote',txt:`🗳 ${ed.eliminated} 被投票放逐 (${vc} 票)`});
+
+      if(day.final_statements && day.final_statements.length){
+        sessionSummary.keyEvents.push(`Round ${s.round}: ${day.final_statements.length} final statements`);
       }
-      const hs=(s.day||{}).hunter_shot;
+      if(day.vote && day.vote.runoff){
+        dialogEntries.push({t:'msg',c:'runoff',txt:`Runoff between ${day.vote.tied_targets.join(', ')}`});
+        sessionSummary.keyEvents.push(`Round ${s.round}: runoff between ${day.vote.tied_targets.join(', ')}`);
+      }
+
+      const vote=day.vote||{};
+      if(vote.eliminated){
+        if(players[vote.eliminated]) players[vote.eliminated].alive=false;
+        const cnt=vote.vote_counts||{};
+        const vc=cnt[vote.eliminated]||0;
+        dialogEntries.push({t:'msg',c:'vote',txt:`${vote.eliminated} is eliminated by vote (${vc} votes)`});
+        sessionSummary.keyEvents.push(`Round ${s.round}: ${vote.eliminated} eliminated`);
+      }
+
+      if(day.last_words && day.last_words.player){
+        dialogEntries.push({t:'msg',c:'last',txt:`Last words from ${day.last_words.player}: ${day.last_words.speech||''}`});
+      }
+
+      const hs=day.hunter_shot;
       if(hs){
         if(players[hs]) players[hs].alive=false;
-        dialogEntries.push({t:'msg',c:'kill',txt:`💥 猎人开枪击杀 ${hs}`});
+        dialogEntries.push({t:'msg',c:'kill',txt:`Hunter shot kills ${hs}`});
+        sessionSummary.keyEvents.push(`Round ${s.round}: hunter shot ${hs}`);
+      }
+
+      if(vote.votes){
+        sessionSummary.voteHistory.push(
+          `Round ${s.round}: ` + Object.entries(vote.votes).map(([k,v])=>`${k}->${v}`).join(', ')
+        );
+      }
+      if(vote.runoff && vote.initial_votes){
+        sessionSummary.voteHistory.push(
+          `Round ${s.round} initial: ` + Object.entries(vote.initial_votes).map(([k,v])=>`${k}->${v}`).join(', ')
+        );
       }
     }
   }
 }
 
-// ── Render ──
 function render(){
   const si=document.getElementById('stepInfo');
   si.textContent=current>=0?`Step ${current+1}/${steps.length}`:'-';
 
-  // phase badge
   const s=current>=0?steps[current]:null;
-  const ph=s?.phase||'';
+  const ph=s?.phase||s?.type||'';
   const lbl=document.getElementById('phaseLabel');
   const map={
-    night:'🌙 NIGHT',werewolf:'🐺 WOLF KILL',seer:'🔮 SEER',witch:'🧪 WITCH',
-    day:'☀ DAY',discussion:'☀ DAY DISCUSSION',vote:'🗳 VOTE',hunter:'💀 HUNTER'
+    night:'NIGHT',werewolf:'WOLF KILL',seer:'SEER',witch:'WITCH',
+    day:'DAY',discussion:'DISCUSSION',vote:'VOTE',hunter:'HUNTER',runoff:'RUNOFF'
   };
   let badge='', cls='night';
-  for(const [k,v] of Object.entries(map)){
-    if(ph.includes(k)){badge=v;break}
-  }
-  if(ph.includes('day')||ph.includes('discussion')) cls='day';
-  else if(ph.includes('vote')||ph.includes('hunter')) cls='vote';
+  for(const [k,v] of Object.entries(map)){ if((ph||'').includes(k)){badge=v;break} }
+  if((ph||'').includes('day')||(ph||'').includes('discussion')||(ph||'').includes('final')) cls='day';
+  else if((ph||'').includes('vote')||(ph||'').includes('hunter')||(ph||'').includes('runoff')) cls='vote';
   lbl.textContent=badge||ph||''; lbl.className='phase-badge '+cls;
 
-  // ── Faction panels ──
   const groups={gods:[],vills:[],wolves:[]};
   Object.entries(players).forEach(([name,p])=>{
     groups[getFactionGroup(p)].push({name,...p});
@@ -351,60 +386,60 @@ function render(){
     const dead=!p.alive?'dead':'';
     const fc=getFactionCSS(p);
     return `<div class="player-card ${dead} ${fc}">
-      <div class="player-name">${!p.alive?'💀 ':''}${name}</div>
-      <div class="player-model">${p.model}</div>
-      <div class="player-role">${p.role}</div>
-      ${p.action?`<div class="action-tag">⚡ ${p.action}</div>`:''}
-      ${p.speech?`<div class="think-hint" title="${esc(p.speech)}">💬 ${esc(p.speech.substring(0,45))}…</div>`:''}
-      ${p.think?`<div class="think-hint" title="${esc(p.think)}">🧠 ${esc(p.think.substring(0,35))}…</div>`:''}
+      <div class="player-name">${!p.alive?'× ':''}${name}</div>
+      <div class="player-model">${esc(p.model)}</div>
+      <div class="player-role">${esc(p.role)}</div>
+      ${p.action?`<div class="action-tag">${esc(p.action)}</div>`:''}
+      <div class="read-row">suspect: ${esc(p.suspect||'none')}</div>
+      <div class="read-row">trust: ${esc(p.trust||'none')}</div>
+      <div class="read-row">claim: ${esc(p.claim||'none')}</div>
+      ${p.plan?`<div class="think-hint" title="${esc(p.plan)}">plan: ${esc(p.plan.substring(0,36))}</div>`:''}
     </div>`;
   }
 
   document.getElementById('cardsGods').innerHTML = groups.gods.length
     ? groups.gods.map(({name,...p})=>cardHTML(name,p)).join('')
-    : '<div class="empty-hint">本局无神职</div>';
+    : '<div class="empty-hint">No god roles.</div>';
   document.getElementById('cardsVills').innerHTML = groups.vills.length
     ? groups.vills.map(({name,...p})=>cardHTML(name,p)).join('')
-    : '<div class="empty-hint">本局无村民</div>';
+    : '<div class="empty-hint">No villagers.</div>';
   document.getElementById('cardsWolves').innerHTML = groups.wolves.length
     ? groups.wolves.map(({name,...p})=>cardHTML(name,p)).join('')
-    : '<div class="empty-hint">本局无狼人</div>';
+    : '<div class="empty-hint">No werewolves.</div>';
 
-  // ── Dialog ──
   document.getElementById('dialogContent').innerHTML = dialogEntries.map(e=>{
     if(e.t==='msg'){
       const cn=e.c==='night'?'night-group':e.c;
-      return `<div class="msg ${cn==='night'?'':cn}">${e.txt}</div>`;
+      return `<div class="msg ${cn}">${esc(e.txt)}</div>`;
     }
     if(e.t==='speech'){
       return `<div class="chat-bubble left ${e.c}">
         <div class="bbl-header">
-          <span class="bbl-name">${e.dead?'💀 ':''}${e.name}</span>
-          <span class="bbl-role">${e.role||''}</span>
-          ${e.dead?`<span class="bbl-dead">(已阵亡)</span>`:''}
+          <span class="bbl-name">${e.dead?'× ':''}${esc(e.name)}</span>
+          <span class="bbl-role">${esc(e.role||'')}</span>
+          ${e.dead?`<span class="bbl-dead">(dead)</span>`:''}
         </div>
-        <div class="bbl-speech">${esc(e.speech||'(沉默)')}</div>
-        ${e.think?`<div class="bbl-think">🧠 内心想法: ${esc(e.think)}</div>`:''}
+        <div class="bbl-speech">${esc(e.speech||'(silent)')}</div>
+        ${e.think?`<div class="bbl-think">reason: ${esc(e.think)}</div>`:''}
+        ${e.meta?`<div class="bbl-reads">${esc(e.meta)}</div>`:''}
       </div>`;
     }
     return '';
   }).join('');
 
-  // ── Log ──
   document.getElementById('logContent').innerHTML = dialogEntries
     .filter(e=>e.t==='msg')
-    .map(e=>`<div class="log-entry ${e.c==='night'?'info':e.c}">${e.txt}</div>`)
+    .map(e=>`<div class="log-entry ${e.c==='night'?'info':e.c}">${esc(e.txt)}</div>`)
     .join('');
 
-  // scroll dialog
+  document.getElementById('analysisContent').innerHTML = buildAnalysisHTML();
+
   const dp=document.getElementById('dialogPanel');
   dp.scrollTop=dp.scrollHeight;
   const lp=document.getElementById('logPanel');
   if(lp.style.display!=='none') lp.scrollTop=lp.scrollHeight;
 
-  // ── Result ──
   const res=document.getElementById('result');
-  // determine winner from alive players on last step
   if(current>=steps.length-2){
     let wolves=0, vills=0;
     Object.values(players).forEach(p=>{
@@ -412,21 +447,47 @@ function render(){
       if(p.faction==='werewolf') wolves++;
       else vills++;
     });
-    if(!wolves) res.innerHTML='<div class="result-banner good">🏆 好人阵营获胜！所有狼人已被消灭</div>';
-    else if(wolves>=vills) res.innerHTML='<div class="result-banner evil">🐺 狼人阵营获胜！狼人占领了村庄</div>';
+    if(!wolves) res.innerHTML='<div class="result-banner good">Villager team wins.</div>';
+    else if(wolves>=vills) res.innerHTML='<div class="result-banner evil">Werewolf team wins.</div>';
     else res.innerHTML='';
-  }
-
-  // ── Highlight faction panels ──
-  const winFaction=document.querySelector('.result-banner')?.classList.contains('evil')?'wolves':'gods';
-  document.querySelectorAll('.faction-panel').forEach(el=>el.style.boxShadow='none');
-  if(current>=steps.length-2){
-    const panel=document.getElementById('panel'+winFaction.charAt(0).toUpperCase()+winFaction.slice(1));
-    if(panel) panel.style.boxShadow='0 0 12px rgba(255,255,255,.06)';
   }
 }
 
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function buildAnalysisHTML(){
+  const aliveCount = Object.values(players).filter(p=>p.alive).length;
+  const deadCount = Object.values(players).filter(p=>!p.alive).length;
+  const voteCount = sessionSummary.voteHistory.length;
+  const claimCount = sessionSummary.claims.length;
+
+  return `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="k">Alive</div><div class="v">${aliveCount}</div></div>
+      <div class="metric-card"><div class="k">Dead</div><div class="v">${deadCount}</div></div>
+      <div class="metric-card"><div class="k">Vote Rounds</div><div class="v">${voteCount}</div></div>
+      <div class="metric-card"><div class="k">Claims Seen</div><div class="v">${claimCount}</div></div>
+    </div>
+    ${analysisSection('Vote History', sessionSummary.voteHistory)}
+    ${analysisSection('Claims', sessionSummary.claims)}
+    ${analysisSection('Suspicion Reads', sessionSummary.suspicionReads)}
+    ${analysisSection('Trust Reads', sessionSummary.trustReads)}
+    ${analysisSection('Key Events', sessionSummary.keyEvents)}
+  `;
+}
+
+function analysisSection(title, items){
+  const rows = (items && items.length)
+    ? items.map(item=>`<div>${esc(item)}</div>`).join('')
+    : '<div>No data yet.</div>';
+  return `<div class="analysis-section"><h5>${esc(title)}</h5><div class="analysis-list">${rows}</div></div>`;
+}
+
+function esc(s){
+  return String(s||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
 </script>
 </body>
 </html>
