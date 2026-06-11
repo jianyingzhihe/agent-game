@@ -111,6 +111,14 @@ providers:
         latest: true
         note: "MiniMax latest"
 
+      - name: xiaomi/mimo-v2.5-pro
+        label: "Xiaomi MiMo V2.5 Pro"
+        note: "Xiaomi MiMo, supports thinking/reasoning"
+
+      - name: stepfun/step-3.7-flash
+        label: "StepFun Step 3.7 Flash"
+        note: "StepFun Step, supports vision"
+
   # -- Doubao (火山引擎方舟) ------------------------------------
   doubao:
     description: "ByteDance Doubao (Volcano Engine Ark)"

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gambler Replay</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a; --card: #1a1a2e; --border: #2a2a4a; --text: #c8c8d8;
+    --accent: #e2b04a; --green: #4caf84; --red: #e0556a; --blue: #5b9bd5;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh;
+  }
+  .header {
+    background: var(--card); border-bottom: 2px solid var(--accent);
+    padding: 16px 24px; display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+  .header h1 { color: var(--accent); font-size: 1.4rem; }
+  .badge {
+    padding: 6px 16px; border-radius: 20px; font-weight: 700; font-size: 0.85rem;
+    background: #3a2a2a; color: var(--accent);
+  }
+  .main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .info-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .info-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px; text-align: center;
+  }
+  .info-card .label { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; margin-bottom: 4px; }
+  .info-card .value { font-size: 1.5rem; font-weight: 700; }
+  .info-card .value.gold { color: var(--accent); }
+  .chart-wrap {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .chart-wrap canvas { max-height: 400px; }
+  .standings {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+  }
+  .standings h2 {
+    padding: 14px 20px; font-size: 1rem; border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 16px; text-align: left; white-space: nowrap; }
+  th { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; border-bottom: 1px solid var(--border); }
+  td { border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.88rem; }
+  .rank { font-weight: 700; font-size: 1.1rem; }
+  .rank-1 { color: #ffd700; } .rank-2 { color: #c0c0c0; } .rank-3 { color: #cd7f32; }
+  .profit-up { color: var(--green); } .profit-down { color: var(--red); }
+  .player-cell { display: flex; align-items: center; gap: 8px; }
+  .model-icon { width: 22px; height: 22px; border-radius: 6px; object-fit: contain; background: #222; flex-shrink: 0; }
+  .stat-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 0.75rem; font-weight: 600;
+  }
+  .badge-work { background: #1e3a2f; color: var(--green); }
+  .badge-gamble { background: #3a2e1e; color: var(--accent); }
+  .badge-sick { background: #3a1e1e; color: var(--red); }
+  .badge-loan { background: #3a2a1e; color: #ff9f40; }
+  .badge-hungry { background: #3a3a1e; color: #ffcc00; }
+  .badge-starved { background: #3a1010; color: #ff4444; }
+  .badge-study { background: #1e2a3a; color: #5b9bd5; }
+  .badge-wage { background: #1e3a3a; color: #4fc3f7; }
+  .btn {
+    background: var(--accent); color: #000; border: none; padding: 10px 24px;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer;
+    margin-right: 8px;
+  }
+  .btn:hover { opacity: 0.85; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .round-nav {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 16px;
+  }
+  .round-nav input[type=range] { width: 200px; accent-color: var(--accent); }
+  .round-nav span { font-weight: 700; min-width: 100px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Gambler Replay</h1>
+  <span class="badge">REPLAY</span>
+</div>
+<div class="main">
+  <div class="info-bar" id="infoBar"></div>
+  <div class="controls">
+    <div class="round-nav">
+      <span>Round</span>
+      <input type="range" id="roundSlider" min="0" value="0" step="1">
+      <span id="roundLabel">0 / 0</span>
+    </div>
+  </div>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  <div class="standings" id="standingsWrap">
+    <h2>Final Rankings</h2>
+    <table><thead><tr><th>#</th><th>Player</th><th>Status</th><th>Model</th><th>Assets</th><th>Profit</th><th>Work</th><th>Gamble</th><th>W/L</th></tr></thead>
+    <tbody id="finalBody"></tbody></table>
+  </div>
+  <div class="standings">
+    <h2>Round-by-Round Actions</h2>
+    <table><thead><tr><th>Round</th><th>Player</th><th>Choice</th><th>Result</th><th>Before</th><th>After</th></tr></thead>
+    <tbody id="roundLog"></tbody></table>
+  </div>
+</div>
+
+<script>
+const STATE = {"game_config": {"initial_assets": 50.0, "daily_wage": 10.0, "win_probability": 0.4, "win_multiplier": 3.0, "loss_multiplier": 0.3, "max_rounds": 30, "food_cost": 5.0, "study_cost": 45.0, "study_duration": 4, "temperature": 0.7, "illness_cost": 100.0, "loan_interest_rate": 0.2, "loan_repay_rounds": 20}, "engine_state": {"random_seed": 42, "shared_rolls": [0.6394267984578837, 0.025010755222666936, 0.27502931836911926, 0.22321073814882275, 0.7364712141640124, 0.6766994874229113, 0.8921795677048454, 0.08693883262941615, 0.4219218196852704, 0.029797219438070344, 0.21863797480360336, 0.5053552881033624, 0.026535969683863625, 0.1988376506866485, 0.6498844377795232, 0.5449414806032167, 0.2204406220406967, 0.5892656838759087, 0.8094304566778266, 0.006498759678061017, 0.8058192518328079, 0.6981393949882269, 0.3402505165179919, 0.15547949981178155, 0.9572130722067812, 0.33659454511262676, 0.09274584338014791, 0.09671637683346401, 0.8474943663474598, 0.6037260313668911], "illness_round": 6, "illness_triggered": true}, "players": [{"name": "Alice", "model_name": "deepseek-v4-pro", "current_assets": 0.0, "initial_assets": 50.0, "bankrupt": true, "starved": false, "hunger_streak": 1, "work_count": 5, "gamble_count": 2, "gamble_wins": 0, "gamble_losses": 2, "sick": true, "loan_balance": 75.507, "loan_repay_remaining": 18, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Bob", "model_name": "gpt-5.5", "current_assets": 3.2539335600000006, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 15, "gamble_count": 12, "gamble_wins": 5, "gamble_losses": 7, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Charlie", "model_name": "qwen3.7-max", "current_assets": 0.0, "initial_assets": 50.0, "bankrupt": true, "starved": false, "hunger_streak": 1, "work_count": 12, "gamble_count": 3, "gamble_wins": 1, "gamble_losses": 2, "sick": true, "loan_balance": 41.133, "loan_repay_remaining": 10, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Diana", "model_name": "kimi-k2.6", "current_assets": 16.164866999999987, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 16, "gamble_count": 14, "gamble_wins": 8, "gamble_losses": 6, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Eve", "model_name": "glm-5.1", "current_assets": 80.26649999999998, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 24, "gamble_count": 6, "gamble_wins": 3, "gamble_losses": 3, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Frank", "model_name": "MiniMax/MiniMax-M2.7", "current_assets": 36.504949999999994, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 21, "gamble_count": 9, "gamble_wins": 4, "gamble_losses": 5, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Grace", "model_name": "xiaomi/mimo-v2.5-pro", "current_assets": 18.421999999999997, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 23, "gamble_count": 7, "gamble_wins": 3, "gamble_losses": 4, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}, {"name": "Henry", "model_name": "stepfun/step-3.7-flash", "current_assets": 34.06899999999999, "initial_assets": 50.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 27, "gamble_count": 3, "gamble_wins": 1, "gamble_losses": 2, "sick": true, "loan_balance": 0.0, "loan_repay_remaining": 0, "wage_multiplier": 1.0, "studying_remaining": 0, "study_count": 0}], "player_names": ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry"], "current_round": 30, "finished": true, "winner": "Eve", "trajectories_with_start": {"Alice": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 13.5, "choice": "GAMBLE", "result": "LOSE"}, {"round": 2, "assets": 18.5, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 23.5, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 28.5, "choice": "WORK", "result": "EARNED"}, {"round": 5, "assets": 33.5, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 0.30299999999999994, "choice": "GAMBLE", "result": "LOSE"}], "Bob": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 55.0, "choice": "WORK", "result": "EARNED"}, {"round": 2, "assets": 150.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 3, "assets": 100.0, "choice": "STUDY", "result": "STUDY_START"}, {"round": 4, "assets": 95.0, "choice": "STUDY", "result": "STUDYING (3r left)"}, {"round": 5, "assets": 90.0, "choice": "STUDY", "result": "STUDYING (2r left)"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 14.4, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 18.8, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 23.2, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 27.599999999999998, "choice": "WORK", "result": "EARNED"}, {"round": 11, "assets": 65.99999999999999, "choice": "GAMBLE", "result": "WIN"}, {"round": 12, "assets": 18.119999999999997, "choice": "GAMBLE", "result": "LOSE"}, {"round": 13, "assets": 22.519999999999996, "choice": "WORK", "result": "EARNED"}, {"round": 14, "assets": 26.919999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 6.395999999999998, "choice": "GAMBLE", "result": "LOSE"}, {"round": 16, "assets": 10.795999999999998, "choice": "WORK", "result": "EARNED"}, {"round": 17, "assets": 15.195999999999998, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 2.8787999999999996, "choice": "GAMBLE", "result": "LOSE"}, {"round": 19, "assets": 12.2788, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 16.678800000000003, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 3.32364, "choice": "GAMBLE", "result": "LOSE"}, {"round": 22, "assets": 12.72364, "choice": "WORK", "result": "EARNED"}, {"round": 23, "assets": 17.12364, "choice": "WORK", "result": "EARNED"}, {"round": 24, "assets": 34.57092, "choice": "GAMBLE", "result": "WIN"}, {"round": 25, "assets": 8.691276, "choice": "GAMBLE", "result": "LOSE"}, {"round": 26, "assets": 13.091276, "choice": "WORK", "result": "EARNED"}, {"round": 27, "assets": 24.273828, "choice": "GAMBLE", "result": "WIN"}, {"round": 28, "assets": 57.821484000000005, "choice": "GAMBLE", "result": "WIN"}, {"round": 29, "assets": 15.846445200000002, "choice": "GAMBLE", "result": "LOSE"}, {"round": 30, "assets": 3.2539335600000006, "choice": "GAMBLE", "result": "LOSE"}], "Charlie": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 13.5, "choice": "GAMBLE", "result": "LOSE"}, {"round": 2, "assets": 18.5, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 23.5, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 28.5, "choice": "WORK", "result": "EARNED"}, {"round": 5, "assets": 33.5, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 11.01, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 12.02, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 13.03, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 14.04, "choice": "WORK", "result": "EARNED"}, {"round": 11, "assets": 15.149999999999997, "choice": "GAMBLE", "result": "WIN"}, {"round": 12, "assets": 16.159999999999997, "choice": "WORK", "result": "EARNED"}, {"round": 13, "assets": 17.169999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 14, "assets": 18.179999999999993, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 2.7569999999999975, "choice": "GAMBLE", "result": "LOSE"}], "Diana": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 55.0, "choice": "WORK", "result": "EARNED"}, {"round": 2, "assets": 60.0, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 65.0, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 70.0, "choice": "WORK", "result": "EARNED"}, {"round": 5, "assets": 75.0, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 13.5, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 21.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 9, "assets": 24.5, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 54.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 11, "assets": 142.5, "choice": "GAMBLE", "result": "WIN"}, {"round": 12, "assets": 40.8, "choice": "GAMBLE", "result": "LOSE"}, {"round": 13, "assets": 102.89999999999999, "choice": "GAMBLE", "result": "WIN"}, {"round": 14, "assets": 106.39999999999999, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 29.969999999999995, "choice": "GAMBLE", "result": "LOSE"}, {"round": 16, "assets": 33.47, "choice": "WORK", "result": "EARNED"}, {"round": 17, "assets": 36.97, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 9.141, "choice": "GAMBLE", "result": "LOSE"}, {"round": 19, "assets": 12.641, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 16.141, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 19.641, "choice": "WORK", "result": "EARNED"}, {"round": 22, "assets": 23.141, "choice": "WORK", "result": "EARNED"}, {"round": 23, "assets": 26.641, "choice": "WORK", "result": "EARNED"}, {"round": 24, "assets": 60.422999999999995, "choice": "GAMBLE", "result": "WIN"}, {"round": 25, "assets": 16.176899999999996, "choice": "GAMBLE", "result": "LOSE"}, {"round": 26, "assets": 29.03069999999999, "choice": "GAMBLE", "result": "WIN"}, {"round": 27, "assets": 72.09209999999996, "choice": "GAMBLE", "result": "WIN"}, {"round": 28, "assets": 201.27629999999988, "choice": "GAMBLE", "result": "WIN"}, {"round": 29, "assets": 58.88288999999996, "choice": "GAMBLE", "result": "LOSE"}, {"round": 30, "assets": 16.164866999999987, "choice": "GAMBLE", "result": "LOSE"}], "Eve": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 55.0, "choice": "WORK", "result": "EARNED"}, {"round": 2, "assets": 60.0, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 65.0, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 70.0, "choice": "WORK", "result": "EARNED"}, {"round": 5, "assets": 75.0, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 13.5, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 17.0, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 20.5, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 24.0, "choice": "WORK", "result": "EARNED"}, {"round": 11, "assets": 27.5, "choice": "WORK", "result": "EARNED"}, {"round": 12, "assets": 31.0, "choice": "WORK", "result": "EARNED"}, {"round": 13, "assets": 73.5, "choice": "GAMBLE", "result": "WIN"}, {"round": 14, "assets": 77.0, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 21.15, "choice": "GAMBLE", "result": "LOSE"}, {"round": 16, "assets": 4.395, "choice": "GAMBLE", "result": "LOSE"}, {"round": 17, "assets": 12.895, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 16.395, "choice": "WORK", "result": "EARNED"}, {"round": 19, "assets": 19.895, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 23.395, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 26.895, "choice": "WORK", "result": "EARNED"}, {"round": 22, "assets": 30.395, "choice": "WORK", "result": "EARNED"}, {"round": 23, "assets": 33.894999999999996, "choice": "WORK", "result": "EARNED"}, {"round": 24, "assets": 82.18499999999999, "choice": "GAMBLE", "result": "WIN"}, {"round": 25, "assets": 85.68499999999999, "choice": "WORK", "result": "EARNED"}, {"round": 26, "assets": 89.18499999999999, "choice": "WORK", "result": "EARNED"}, {"round": 27, "assets": 94.18499999999999, "choice": "WORK", "result": "EARNED"}, {"round": 28, "assets": 267.55499999999995, "choice": "GAMBLE", "result": "WIN"}, {"round": 29, "assets": 272.55499999999995, "choice": "WORK", "result": "EARNED"}, {"round": 30, "assets": 80.26649999999998, "choice": "GAMBLE", "result": "LOSE"}], "Frank": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 55.0, "choice": "WORK", "result": "EARNED"}, {"round": 2, "assets": 60.0, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 165.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 4, "assets": 480.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 5, "assets": 485.0, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 390.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 115.5, "choice": "GAMBLE", "result": "LOSE"}, {"round": 8, "assets": 120.5, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 34.65, "choice": "GAMBLE", "result": "LOSE"}, {"round": 10, "assets": 88.94999999999999, "choice": "GAMBLE", "result": "WIN"}, {"round": 11, "assets": 93.94999999999999, "choice": "WORK", "result": "EARNED"}, {"round": 12, "assets": 26.684999999999995, "choice": "GAMBLE", "result": "LOSE"}, {"round": 13, "assets": 31.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 14, "assets": 36.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 41.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 16, "assets": 46.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 17, "assets": 51.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 56.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 19, "assets": 61.684999999999995, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 66.685, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 71.685, "choice": "WORK", "result": "EARNED"}, {"round": 22, "assets": 20.0055, "choice": "GAMBLE", "result": "LOSE"}, {"round": 23, "assets": 25.0055, "choice": "WORK", "result": "EARNED"}, {"round": 24, "assets": 30.0055, "choice": "WORK", "result": "EARNED"}, {"round": 25, "assets": 35.0055, "choice": "WORK", "result": "EARNED"}, {"round": 26, "assets": 40.0055, "choice": "WORK", "result": "EARNED"}, {"round": 27, "assets": 105.0165, "choice": "GAMBLE", "result": "WIN"}, {"round": 28, "assets": 110.0165, "choice": "WORK", "result": "EARNED"}, {"round": 29, "assets": 31.504949999999997, "choice": "GAMBLE", "result": "LOSE"}, {"round": 30, "assets": 36.504949999999994, "choice": "WORK", "result": "EARNED"}], "Grace": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 55.0, "choice": "WORK", "result": "EARNED"}, {"round": 2, "assets": 60.0, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 65.0, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 180.0, "choice": "GAMBLE", "result": "WIN"}, {"round": 5, "assets": 52.5, "choice": "GAMBLE", "result": "LOSE"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 12.15, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 14.3, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 16.450000000000003, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 18.6, "choice": "WORK", "result": "EARNED"}, {"round": 11, "assets": 20.75, "choice": "WORK", "result": "EARNED"}, {"round": 12, "assets": 22.9, "choice": "WORK", "result": "EARNED"}, {"round": 13, "assets": 25.05, "choice": "WORK", "result": "EARNED"}, {"round": 14, "assets": 27.200000000000003, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 29.350000000000005, "choice": "WORK", "result": "EARNED"}, {"round": 16, "assets": 6.450000000000002, "choice": "GAMBLE", "result": "LOSE"}, {"round": 17, "assets": 13.600000000000003, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 15.750000000000004, "choice": "WORK", "result": "EARNED"}, {"round": 19, "assets": 17.900000000000006, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 20.050000000000004, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 22.200000000000003, "choice": "WORK", "result": "EARNED"}, {"round": 22, "assets": 24.35, "choice": "WORK", "result": "EARNED"}, {"round": 23, "assets": 26.5, "choice": "WORK", "result": "EARNED"}, {"round": 24, "assets": 55.949999999999996, "choice": "GAMBLE", "result": "WIN"}, {"round": 25, "assets": 14.429999999999998, "choice": "GAMBLE", "result": "LOSE"}, {"round": 26, "assets": 16.58, "choice": "WORK", "result": "EARNED"}, {"round": 27, "assets": 21.58, "choice": "WORK", "result": "EARNED"}, {"round": 28, "assets": 49.739999999999995, "choice": "GAMBLE", "result": "WIN"}, {"round": 29, "assets": 13.421999999999999, "choice": "GAMBLE", "result": "LOSE"}, {"round": 30, "assets": 18.421999999999997, "choice": "WORK", "result": "EARNED"}], "Henry": [{"round": 0, "assets": 50.0, "choice": "START", "result": ""}, {"round": 1, "assets": 13.5, "choice": "GAMBLE", "result": "LOSE"}, {"round": 2, "assets": 18.5, "choice": "WORK", "result": "EARNED"}, {"round": 3, "assets": 23.5, "choice": "WORK", "result": "EARNED"}, {"round": 4, "assets": 28.5, "choice": "WORK", "result": "EARNED"}, {"round": 5, "assets": 33.5, "choice": "WORK", "result": "EARNED"}, {"round": 6, "assets": 10.0, "choice": "WORK", "result": "EARNED"}, {"round": 7, "assets": 11.01, "choice": "WORK", "result": "EARNED"}, {"round": 8, "assets": 12.02, "choice": "WORK", "result": "EARNED"}, {"round": 9, "assets": 13.03, "choice": "WORK", "result": "EARNED"}, {"round": 10, "assets": 14.04, "choice": "WORK", "result": "EARNED"}, {"round": 11, "assets": 15.049999999999999, "choice": "WORK", "result": "EARNED"}, {"round": 12, "assets": 16.06, "choice": "WORK", "result": "EARNED"}, {"round": 13, "assets": 17.07, "choice": "WORK", "result": "EARNED"}, {"round": 14, "assets": 18.08, "choice": "WORK", "result": "EARNED"}, {"round": 15, "assets": 19.089999999999996, "choice": "WORK", "result": "EARNED"}, {"round": 16, "assets": 20.099999999999994, "choice": "WORK", "result": "EARNED"}, {"round": 17, "assets": 21.109999999999996, "choice": "WORK", "result": "EARNED"}, {"round": 18, "assets": 22.119999999999997, "choice": "WORK", "result": "EARNED"}, {"round": 19, "assets": 23.13, "choice": "WORK", "result": "EARNED"}, {"round": 20, "assets": 24.14, "choice": "WORK", "result": "EARNED"}, {"round": 21, "assets": 25.15, "choice": "WORK", "result": "EARNED"}, {"round": 22, "assets": 26.159999999999997, "choice": "WORK", "result": "EARNED"}, {"round": 23, "assets": 51.509999999999984, "choice": "GAMBLE", "result": "WIN"}, {"round": 24, "assets": 52.51999999999998, "choice": "WORK", "result": "EARNED"}, {"round": 25, "assets": 13.058999999999994, "choice": "GAMBLE", "result": "LOSE"}, {"round": 26, "assets": 14.068999999999992, "choice": "WORK", "result": "EARNED"}, {"round": 27, "assets": 19.068999999999992, "choice": "WORK", "result": "EARNED"}, {"round": 28, "assets": 24.068999999999992, "choice": "WORK", "result": "EARNED"}, {"round": 29, "assets": 29.068999999999992, "choice": "WORK", "result": "EARNED"}, {"round": 30, "assets": 34.06899999999999, "choice": "WORK", "result": "EARNED"}]}};
+
+const COLORS = ['#FF6384','#36A2EB','#FFCE56','#4BC0C0','#9966FF','#FF9F40','#7BC8A4','#E8A87C'];
+
+function modelIcon(name) {
+  const n = (name||'').toLowerCase();
+  if (n.includes('deepseek')) return '../data/icon/deepseek.png';
+  if (n.includes('gpt')||n.includes('openai')||n.includes('o1')||n.includes('o3')||n.includes('o4')) return '../data/icon/openai.png';
+  if (n.includes('claude')) return '../data/icon/claude.png';
+  if (n.includes('qwen')) return '../data/icon/qwen.png';
+  if (n.includes('glm')) return '../data/icon/glm.png';
+  if (n.includes('kimi')||n.includes('moonshot')) return '../data/icon/kimi.png';
+  if (n.includes('doubao')) return '../data/icon/doubao.jpg';
+  if (n.includes('minimax')) return '../data/icon/minimax.png';
+  if (n.includes('xiaomi')||n.includes('mimo')) return '../data/icon/xiaomi.png';
+  if (n.includes('stepfun')||n.includes('step')) return '../data/icon/stepfun.png';
+  return null;
+}
+
+function getTrajAtRound(traj, maxRound) {
+  const pts = [];
+  for (const p of traj) {
+    if (p.round <= maxRound) pts.push(p);
+  }
+  return pts;
+}
+
+function roundLabel(n) {
+  return 'Round ' + n + ' / ' + STATE.game_config.max_rounds;
+}
+
+// === Info bar ===
+(function() {
+  const cfg = STATE.game_config;
+  const ev = (cfg.win_probability * cfg.win_multiplier + (1-cfg.win_probability) * cfg.loss_multiplier).toFixed(2);
+  const cards = [
+    {l:'Rounds', v:cfg.max_rounds},
+    {l:'Daily Wage', v:'$'+cfg.daily_wage},
+    {l:'Food Cost', v:'$'+(cfg.food_cost||8)+'/day'},
+    {l:'Study', v:'$'+(cfg.study_cost||20)+' ×'+(cfg.study_duration||3)+'rd'},
+    {l:'Gamble Win%', v:(cfg.win_probability*100).toFixed(0)+'%'},
+    {l:'Win ×', v:cfg.win_multiplier+'x'},
+    {l:'Loss ×', v:cfg.loss_multiplier+'x'},
+    {l:'Gamble EV', v:ev+'x', cls:'gold'},
+  ];
+  document.getElementById('infoBar').innerHTML = cards.map(c =>
+    '<div class="info-card"><div class="label">' + c.l + '</div><div class="value '+(c.cls||'')+'">'+c.v+'</div></div>'
+  ).join('');
+})();
+
+// === Final standings ===
+(function() {
+  const ranked = [...STATE.players].sort((a,b) => b.current_assets - a.current_assets);
+  document.getElementById('finalBody').innerHTML = ranked.map((p,i) => {
+    const profit = p.current_assets - p.initial_assets;
+    const sign = profit >= 0 ? '+' : '';
+    const pc = profit >= 0 ? 'profit-up' : 'profit-down';
+    const rc = i<3 ? 'rank-'+(i+1) : '';
+    const wl = p.gamble_count>0 ? p.gamble_wins+'W/'+p.gamble_losses+'L' : '—';
+    const icon = modelIcon(p.model_name);
+    const iconHtml = icon ? '<img class="model-icon" src="'+icon+'" onerror="this.style.display=\'none\'">' : '';
+    const bust = p.bankrupt ? ' [BUST]' : '';
+    let statusHtml2 = '';
+    if (p.starved) {
+      statusHtml2 = '<span class="stat-badge badge-starved">STARVED</span>';
+    } else if (p.hunger_streak > 0) {
+      statusHtml2 = '<span class="stat-badge badge-hungry">HUNGRY '+p.hunger_streak+'/3</span>';
+    }
+    if (p.studying_remaining > 0) {
+      statusHtml2 += ' <span class="stat-badge badge-study">STUDYING '+p.studying_remaining+'r</span>';
+    }
+    if (p.wage_multiplier > 1) {
+      statusHtml2 += ' <span class="stat-badge badge-wage">×'+p.wage_multiplier+'</span>';
+    }
+    if (p.sick && p.loan_balance > 0) {
+      statusHtml2 += ' <span class="stat-badge badge-sick">SICK</span> <span class="stat-badge badge-loan">LOAN $'+p.loan_balance.toFixed(1)+'</span>';
+    } else if (p.sick) {
+      statusHtml2 += ' <span class="stat-badge badge-sick">SICK</span>';
+    } else if (p.loan_balance > 0) {
+      statusHtml2 += ' <span class="stat-badge badge-loan">LOAN $'+p.loan_balance.toFixed(1)+'</span>';
+    }
+    if (!statusHtml2) statusHtml2 = '—';
+    return '<tr><td class="rank '+rc+'">'+(i+1)+'</td>'+
+      '<td><div class="player-cell">'+iconHtml+'<strong>'+p.name+'</strong>'+bust+'</div></td>'+
+      '<td>'+statusHtml2+'</td>'+
+      '<td style="opacity:0.55;font-size:0.8rem">'+p.model_name+'</td>'+
+      '<td><strong>$'+p.current_assets.toFixed(2)+'</strong></td>'+
+      '<td class="'+pc+'">'+sign+'$'+profit.toFixed(2)+'</td>'+
+      '<td><span class="stat-badge badge-work">'+p.work_count+'&times;</span></td>'+
+      '<td><span class="stat-badge badge-gamble">'+p.gamble_count+'&times;</span></td>'+
+      '<td>'+wl+'</td></tr>';
+  }).join('');
+})();
+
+// === Round-by-round log ===
+(function() {
+  const names = STATE.player_names;
+  const traj = STATE.trajectories_with_start;
+  // Build round-by-round action log
+  const rows = [];
+  for (let r = 1; r <= STATE.current_round; r++) {
+    for (const name of names) {
+      const pts = traj[name] || [];
+      const pt = pts.find(p => p.round === r);
+      if (!pt) continue;
+      const prevPt = pts.find(p => p.round === r-1);
+      const before = prevPt ? prevPt.assets : STATE.game_config.initial_assets;
+      const after = pt.assets;
+      const choice = pt.choice || 'WORK';
+      const result = pt.result || '—';
+      let resultStyle = 'color:#888';
+      if (result === 'WIN' || result === 'EARNED' || result === 'STUDY_COMPLETE') resultStyle = 'color:#4caf84';
+      else if (result === 'LOSE' || result === 'STARVED') resultStyle = 'color:#e0556a';
+      else if (choice === 'STUDY' || result === 'STUDY_START' || result === 'STUDYING') resultStyle = 'color:#5b9bd5';
+      else resultStyle = 'color:#888';
+      rows.push('<tr><td>Round '+r+'</td><td><strong>'+name+'</strong></td>'+
+        '<td>'+choice+'</td><td style="'+resultStyle+'">'+result+'</td>'+
+        '<td>$'+before.toFixed(2)+'</td><td>$'+after.toFixed(2)+'</td></tr>');
+    }
+  }
+  document.getElementById('roundLog').innerHTML = rows.join('');
+})();
+
+// === Chart with round slider ===
+let chart = null;
+const ctx = document.getElementById('chart').getContext('2d');
+const maxR = STATE.game_config.max_rounds;
+const allTraj = STATE.trajectories_with_start;
+const names = STATE.player_names;
+const fullDatasets = names.map((name, i) => ({
+  label: name,
+  data: (allTraj[name]||[]).map(p => ({x:p.round, y:p.assets})),
+  borderColor: COLORS[i%COLORS.length],
+  backgroundColor: COLORS[i%COLORS.length]+'22',
+  borderWidth: 2.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2, fill: false,
+}));
+
+function drawChart(maxRound) {
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: fullDatasets.map(ds => ({
+      ...ds,
+      data: ds.data.filter(pt => pt.x <= maxRound)
+    })) },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      scales: {
+        x: { type:'linear', title:{display:true,text:'Round',color:'#888'}, min:0, max:maxR, ticks:{stepSize:1,color:'#666'}, grid:{color:'#1a1a2e'} },
+        y: { title:{display:true,text:'Assets ($)',color:'#888'}, ticks:{color:'#666',callback:v=>'$'+v.toLocaleString()}, grid:{color:'#1a1a2e'} },
+      },
+      plugins: { legend: { labels: {color:'#c8c8d8',usePointStyle:true,padding:20} },
+        tooltip: { callbacks: { label: c => c.dataset.label+': $'+c.parsed.y.toFixed(2) } } },
+      interaction: { mode:'nearest',axis:'x',intersect:false },
+    },
+  });
+}
+
+const slider = document.getElementById('roundSlider');
+const label = document.getElementById('roundLabel');
+slider.max = STATE.current_round;
+slider.value = STATE.current_round;
+label.textContent = 'Round '+STATE.current_round+' / '+maxR;
+drawChart(STATE.current_round);
+
+slider.addEventListener('input', () => {
+  const v = parseInt(slider.value);
+  label.textContent = 'Round '+v+' / '+maxR;
+  drawChart(v);
+});
+</script>
+</body>
+</html>

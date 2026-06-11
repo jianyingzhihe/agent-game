@@ -33,6 +33,8 @@ GAME_RUNNERS = {
     "dou": "games.doudizhu.runner",
     "sanguosha": "games.sanguosha.runner",
     "sgs": "games.sanguosha.runner",
+    "gambler": "games.gambler.runner",
+    "gamble": "games.gambler.runner",
 }
 
 
@@ -49,7 +51,7 @@ def load_runner(game_type: str):
     module_name = GAME_RUNNERS.get(game_type)
     if not module_name:
         print(f"Unknown GAME_TYPE: {game_type}")
-        print("Available: werewolf, avalon, codenames, texas_holdem, doudizhu")
+        print("Available: werewolf, avalon, codenames, texas_holdem, doudizhu, gambler")
         sys.exit(1)
     module = importlib.import_module(module_name)
     return module.run

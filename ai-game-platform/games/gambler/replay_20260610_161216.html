@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gambler Replay</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a; --card: #1a1a2e; --border: #2a2a4a; --text: #c8c8d8;
+    --accent: #e2b04a; --green: #4caf84; --red: #e0556a; --blue: #5b9bd5;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh;
+  }
+  .header {
+    background: var(--card); border-bottom: 2px solid var(--accent);
+    padding: 16px 24px; display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+  .header h1 { color: var(--accent); font-size: 1.4rem; }
+  .badge {
+    padding: 6px 16px; border-radius: 20px; font-weight: 700; font-size: 0.85rem;
+    background: #3a2a2a; color: var(--accent);
+  }
+  .main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .info-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .info-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px; text-align: center;
+  }
+  .info-card .label { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; margin-bottom: 4px; }
+  .info-card .value { font-size: 1.5rem; font-weight: 700; }
+  .info-card .value.gold { color: var(--accent); }
+  .chart-wrap {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .chart-wrap canvas { max-height: 400px; }
+  .standings {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+  }
+  .standings h2 {
+    padding: 14px 20px; font-size: 1rem; border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 16px; text-align: left; white-space: nowrap; }
+  th { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; border-bottom: 1px solid var(--border); }
+  td { border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.88rem; }
+  .rank { font-weight: 700; font-size: 1.1rem; }
+  .rank-1 { color: #ffd700; } .rank-2 { color: #c0c0c0; } .rank-3 { color: #cd7f32; }
+  .profit-up { color: var(--green); } .profit-down { color: var(--red); }
+  .player-cell { display: flex; align-items: center; gap: 8px; }
+  .model-icon { width: 22px; height: 22px; border-radius: 6px; object-fit: contain; background: #222; flex-shrink: 0; }
+  .stat-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 0.75rem; font-weight: 600;
+  }
+  .badge-work { background: #1e3a2f; color: var(--green); }
+  .badge-gamble { background: #3a2e1e; color: var(--accent); }
+  .badge-sick { background: #3a1e1e; color: var(--red); }
+  .badge-loan { background: #3a2a1e; color: #ff9f40; }
+  .badge-hungry { background: #3a3a1e; color: #ffcc00; }
+  .badge-starved { background: #3a1010; color: #ff4444; }
+  .btn {
+    background: var(--accent); color: #000; border: none; padding: 10px 24px;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer;
+    margin-right: 8px;
+  }
+  .btn:hover { opacity: 0.85; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .round-nav {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 16px;
+  }
+  .round-nav input[type=range] { width: 200px; accent-color: var(--accent); }
+  .round-nav span { font-weight: 700; min-width: 100px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Gambler Replay</h1>
+  <span class="badge">REPLAY</span>
+</div>
+<div class="main">
+  <div class="info-bar" id="infoBar"></div>
+  <div class="controls">
+    <div class="round-nav">
+      <span>Round</span>
+      <input type="range" id="roundSlider" min="0" value="0" step="1">
+      <span id="roundLabel">0 / 0</span>
+    </div>
+  </div>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  <div class="standings" id="standingsWrap">
+    <h2>Final Rankings</h2>
+    <table><thead><tr><th>#</th><th>Player</th><th>Status</th><th>Model</th><th>Assets</th><th>Profit</th><th>Work</th><th>Gamble</th><th>W/L</th></tr></thead>
+    <tbody id="finalBody"></tbody></table>
+  </div>
+  <div class="standings">
+    <h2>Round-by-Round Actions</h2>
+    <table><thead><tr><th>Round</th><th>Player</th><th>Choice</th><th>Result</th><th>Before</th><th>After</th></tr></thead>
+    <tbody id="roundLog"></tbody></table>
+  </div>
+</div>
+
+<script>
+const STATE = {"game_config": {"initial_assets": 100.0, "daily_wage": 10.0, "win_probability": 0.4, "win_multiplier": 3.0, "loss_multiplier": 0.3, "max_rounds": 20}, "players": [{"name": "Alice", "model_name": "deepseek-v4-pro", "current_assets": 25.2426395, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 8, "gamble_count": 12, "gamble_wins": 5, "gamble_losses": 7, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Bob", "model_name": "gpt-5.5", "current_assets": 19.27875465, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 9, "gamble_count": 11, "gamble_wins": 3, "gamble_losses": 8, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Charlie", "model_name": "qwen3.7-max", "current_assets": 39.86194999999999, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 12, "gamble_count": 8, "gamble_wins": 3, "gamble_losses": 5, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Diana", "model_name": "kimi-k2.6", "current_assets": 17.315649999999998, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 13, "gamble_count": 7, "gamble_wins": 2, "gamble_losses": 5, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Eve", "model_name": "glm-5.1", "current_assets": 31.518499999999996, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 15, "gamble_count": 5, "gamble_wins": 1, "gamble_losses": 4, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Frank", "model_name": "MiniMax/MiniMax-M2.7", "current_assets": 10.993495, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 1, "work_count": 12, "gamble_count": 8, "gamble_wins": 2, "gamble_losses": 6, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Grace", "model_name": "xiaomi/mimo-v2.5-pro", "current_assets": 1330.79862, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 5, "gamble_count": 15, "gamble_wins": 9, "gamble_losses": 6, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}, {"name": "Henry", "model_name": "stepfun/step-3.7-flash", "current_assets": 16.847585000000002, "initial_assets": 100.0, "bankrupt": false, "starved": false, "hunger_streak": 0, "work_count": 11, "gamble_count": 9, "gamble_wins": 3, "gamble_losses": 6, "sick": false, "loan_balance": 0.0, "loan_repay_remaining": 0}], "player_names": ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry"], "current_round": 20, "finished": true, "winner": "Grace", "trajectories_with_start": {"Alice": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 70.5}, {"round": 3, "assets": 196.5}, {"round": 4, "assets": 574.5}, {"round": 5, "assets": 170.85}, {"round": 6, "assets": 49.754999999999995}, {"round": 7, "assets": 13.426499999999999}, {"round": 8, "assets": 25.2795}, {"round": 9, "assets": 6.083849999999999}, {"round": 10, "assets": 3.2515499999999973}, {"round": 11, "assets": 13.251549999999998}, {"round": 12, "assets": 2.4754649999999994}, {"round": 13, "assets": 12.475465}, {"round": 14, "assets": 17.475465}, {"round": 15, "assets": 22.475465}, {"round": 16, "assets": 5.2426395}, {"round": 17, "assets": 10.2426395}, {"round": 18, "assets": 15.2426395}, {"round": 19, "assets": 20.2426395}, {"round": 20, "assets": 25.2426395}], "Bob": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 70.5}, {"round": 3, "assets": 196.5}, {"round": 4, "assets": 574.5}, {"round": 5, "assets": 170.85}, {"round": 6, "assets": 49.754999999999995}, {"round": 7, "assets": 13.426499999999999}, {"round": 8, "assets": 18.426499999999997}, {"round": 9, "assets": 4.027949999999999}, {"round": 10, "assets": 14.027949999999999}, {"round": 11, "assets": 19.027949999999997}, {"round": 12, "assets": 4.208384999999999}, {"round": 13, "assets": 14.208385}, {"round": 14, "assets": 19.208385}, {"round": 15, "assets": 4.2625155}, {"round": 16, "assets": 14.2625155}, {"round": 17, "assets": 19.2625155}, {"round": 18, "assets": 4.27875465}, {"round": 19, "assets": 14.27875465}, {"round": 20, "assets": 19.27875465}], "Charlie": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 33.5}, {"round": 3, "assets": 38.5}, {"round": 4, "assets": 100.5}, {"round": 5, "assets": 28.65}, {"round": 6, "assets": 33.65}, {"round": 7, "assets": 8.594999999999999}, {"round": 8, "assets": 13.594999999999999}, {"round": 9, "assets": 18.595}, {"round": 10, "assets": 23.595}, {"round": 11, "assets": 28.595}, {"round": 12, "assets": 33.595}, {"round": 13, "assets": 85.785}, {"round": 14, "assets": 242.355}, {"round": 15, "assets": 71.20649999999999}, {"round": 16, "assets": 19.861949999999997}, {"round": 17, "assets": 24.861949999999997}, {"round": 18, "assets": 29.861949999999997}, {"round": 19, "assets": 34.86194999999999}, {"round": 20, "assets": 39.86194999999999}], "Diana": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 33.5}, {"round": 3, "assets": 38.5}, {"round": 4, "assets": 100.5}, {"round": 5, "assets": 28.65}, {"round": 6, "assets": 7.095}, {"round": 7, "assets": 12.094999999999999}, {"round": 8, "assets": 17.095}, {"round": 9, "assets": 22.095}, {"round": 10, "assets": 27.095}, {"round": 11, "assets": 32.095}, {"round": 12, "assets": 8.128499999999999}, {"round": 13, "assets": 9.385499999999997}, {"round": 14, "assets": 14.385499999999997}, {"round": 15, "assets": 19.385499999999997}, {"round": 16, "assets": 24.385499999999997}, {"round": 17, "assets": 29.385499999999997}, {"round": 18, "assets": 7.315649999999999}, {"round": 19, "assets": 12.315649999999998}, {"round": 20, "assets": 17.315649999999998}], "Eve": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 33.5}, {"round": 3, "assets": 38.5}, {"round": 4, "assets": 43.5}, {"round": 5, "assets": 11.549999999999999}, {"round": 6, "assets": 16.549999999999997}, {"round": 7, "assets": 21.549999999999997}, {"round": 8, "assets": 49.64999999999999}, {"round": 9, "assets": 13.394999999999998}, {"round": 10, "assets": 18.394999999999996}, {"round": 11, "assets": 23.394999999999996}, {"round": 12, "assets": 28.394999999999996}, {"round": 13, "assets": 33.394999999999996}, {"round": 14, "assets": 38.394999999999996}, {"round": 15, "assets": 43.394999999999996}, {"round": 16, "assets": 11.518499999999998}, {"round": 17, "assets": 16.518499999999996}, {"round": 18, "assets": 21.518499999999996}, {"round": 19, "assets": 26.518499999999996}, {"round": 20, "assets": 31.518499999999996}], "Frank": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 33.5}, {"round": 3, "assets": 38.5}, {"round": 4, "assets": 43.5}, {"round": 5, "assets": 11.549999999999999}, {"round": 6, "assets": 16.549999999999997}, {"round": 7, "assets": 21.549999999999997}, {"round": 8, "assets": 26.549999999999997}, {"round": 9, "assets": 31.549999999999997}, {"round": 10, "assets": 36.55}, {"round": 11, "assets": 94.64999999999999}, {"round": 12, "assets": 26.894999999999996}, {"round": 13, "assets": 31.894999999999996}, {"round": 14, "assets": 80.68499999999999}, {"round": 15, "assets": 22.705499999999997}, {"round": 16, "assets": 27.705499999999997}, {"round": 17, "assets": 32.7055}, {"round": 18, "assets": 8.31165}, {"round": 19, "assets": 0.993495}, {"round": 20, "assets": 10.993495}], "Grace": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 105.0}, {"round": 2, "assets": 300.0}, {"round": 3, "assets": 885.0}, {"round": 4, "assets": 890.0}, {"round": 5, "assets": 895.0}, {"round": 6, "assets": 267.0}, {"round": 7, "assets": 272.0}, {"round": 8, "assets": 801.0}, {"round": 9, "assets": 238.79999999999998}, {"round": 10, "assets": 701.4}, {"round": 11, "assets": 2089.2}, {"round": 12, "assets": 625.2599999999999}, {"round": 13, "assets": 1860.7799999999997}, {"round": 14, "assets": 5567.339999999999}, {"round": 15, "assets": 1668.7019999999998}, {"round": 16, "assets": 1673.7019999999998}, {"round": 17, "assets": 5006.106}, {"round": 18, "assets": 1500.3318}, {"round": 19, "assets": 448.59954}, {"round": 20, "assets": 1330.79862}], "Henry": [{"round": 0, "assets": 100.0}, {"round": 1, "assets": 28.5}, {"round": 2, "assets": 33.5}, {"round": 3, "assets": 85.5}, {"round": 4, "assets": 241.5}, {"round": 5, "assets": 70.95}, {"round": 6, "assets": 19.785}, {"round": 7, "assets": 4.4355}, {"round": 8, "assets": 14.435500000000001}, {"round": 9, "assets": 19.4355}, {"round": 10, "assets": 24.4355}, {"round": 11, "assets": 29.4355}, {"round": 12, "assets": 34.435500000000005}, {"round": 13, "assets": 39.435500000000005}, {"round": 14, "assets": 103.30650000000001}, {"round": 15, "assets": 29.491950000000003}, {"round": 16, "assets": 34.49195}, {"round": 17, "assets": 39.49195}, {"round": 18, "assets": 44.49195}, {"round": 19, "assets": 11.847585}, {"round": 20, "assets": 16.847585000000002}]}};
+
+const COLORS = ['#FF6384','#36A2EB','#FFCE56','#4BC0C0','#9966FF','#FF9F40','#7BC8A4','#E8A87C'];
+
+function modelIcon(name) {
+  const n = (name||'').toLowerCase();
+  if (n.includes('deepseek')) return '../data/icon/deepseek.png';
+  if (n.includes('gpt')||n.includes('openai')||n.includes('o1')||n.includes('o3')||n.includes('o4')) return '../data/icon/openai.png';
+  if (n.includes('claude')) return '../data/icon/claude.png';
+  if (n.includes('qwen')) return '../data/icon/qwen.png';
+  if (n.includes('glm')) return '../data/icon/glm.png';
+  if (n.includes('kimi')||n.includes('moonshot')) return '../data/icon/kimi.png';
+  if (n.includes('doubao')) return '../data/icon/doubao.jpg';
+  if (n.includes('minimax')) return '../data/icon/minimax.png';
+  if (n.includes('xiaomi')||n.includes('mimo')) return '../data/icon/xiaomi.png';
+  if (n.includes('stepfun')||n.includes('step')) return '../data/icon/stepfun.png';
+  return null;
+}
+
+function getTrajAtRound(traj, maxRound) {
+  const pts = [];
+  for (const p of traj) {
+    if (p.round <= maxRound) pts.push(p);
+  }
+  return pts;
+}
+
+function roundLabel(n) {
+  return 'Round ' + n + ' / ' + STATE.game_config.max_rounds;
+}
+
+// === Info bar ===
+(function() {
+  const cfg = STATE.game_config;
+  const ev = (cfg.win_probability * cfg.win_multiplier + (1-cfg.win_probability) * cfg.loss_multiplier).toFixed(2);
+  const cards = [
+    {l:'Rounds', v:cfg.max_rounds},
+    {l:'Daily Wage', v:'$'+cfg.daily_wage},
+    {l:'Gamble Win%', v:(cfg.win_probability*100).toFixed(0)+'%'},
+    {l:'Win ×', v:cfg.win_multiplier+'x'},
+    {l:'Loss ×', v:cfg.loss_multiplier+'x'},
+    {l:'Gamble EV', v:ev+'x', cls:'gold'},
+  ];
+  document.getElementById('infoBar').innerHTML = cards.map(c =>
+    '<div class="info-card"><div class="label">' + c.l + '</div><div class="value '+(c.cls||'')+'">'+c.v+'</div></div>'
+  ).join('');
+})();
+
+// === Final standings ===
+(function() {
+  const ranked = [...STATE.players].sort((a,b) => b.current_assets - a.current_assets);
+  document.getElementById('finalBody').innerHTML = ranked.map((p,i) => {
+    const profit = p.current_assets - p.initial_assets;
+    const sign = profit >= 0 ? '+' : '';
+    const pc = profit >= 0 ? 'profit-up' : 'profit-down';
+    const rc = i<3 ? 'rank-'+(i+1) : '';
+    const wl = p.gamble_count>0 ? p.gamble_wins+'W/'+p.gamble_losses+'L' : '—';
+    const icon = modelIcon(p.model_name);
+    const iconHtml = icon ? '<img class="model-icon" src="'+icon+'" onerror="this.style.display=\'none\'">' : '';
+    const bust = p.bankrupt ? ' [BUST]' : '';
+    let statusHtml2 = '';
+    if (p.starved) {
+      statusHtml2 = '<span class="stat-badge badge-starved">STARVED</span>';
+    } else if (p.hunger_streak > 0) {
+      statusHtml2 = '<span class="stat-badge badge-hungry">HUNGRY '+p.hunger_streak+'/3</span>';
+    }
+    if (p.sick && p.loan_balance > 0) {
+      statusHtml2 += ' <span class="stat-badge badge-sick">SICK</span> <span class="stat-badge badge-loan">LOAN $'+p.loan_balance.toFixed(1)+'</span>';
+    } else if (p.sick) {
+      statusHtml2 += ' <span class="stat-badge badge-sick">SICK</span>';
+    } else if (p.loan_balance > 0) {
+      statusHtml2 += ' <span class="stat-badge badge-loan">LOAN $'+p.loan_balance.toFixed(1)+'</span>';
+    }
+    if (!statusHtml2) statusHtml2 = '—';
+    return '<tr><td class="rank '+rc+'">'+(i+1)+'</td>'+
+      '<td><div class="player-cell">'+iconHtml+'<strong>'+p.name+'</strong>'+bust+'</div></td>'+
+      '<td>'+statusHtml2+'</td>'+
+      '<td style="opacity:0.55;font-size:0.8rem">'+p.model_name+'</td>'+
+      '<td><strong>$'+p.current_assets.toFixed(2)+'</strong></td>'+
+      '<td class="'+pc+'">'+sign+'$'+profit.toFixed(2)+'</td>'+
+      '<td><span class="stat-badge badge-work">'+p.work_count+'&times;</span></td>'+
+      '<td><span class="stat-badge badge-gamble">'+p.gamble_count+'&times;</span></td>'+
+      '<td>'+wl+'</td></tr>';
+  }).join('');
+})();
+
+// === Round-by-round log ===
+(function() {
+  const names = STATE.player_names;
+  const traj = STATE.trajectories_with_start;
+  // Build round-by-round action log
+  const rows = [];
+  for (let r = 1; r <= STATE.current_round; r++) {
+    for (const name of names) {
+      const pts = traj[name] || [];
+      const pt = pts.find(p => p.round === r);
+      if (!pt) continue;
+      const prevPt = pts.find(p => p.round === r-1);
+      const before = prevPt ? prevPt.assets : STATE.game_config.initial_assets;
+      const after = pt.assets;
+      // Infer choice from asset change
+      let choice, result, resultStyle;
+      if (Math.abs(after - before - STATE.game_config.daily_wage) < 0.01) {
+        choice = 'WORK';
+        result = '—';
+        resultStyle = 'color:#4caf84';
+      } else if (after > before) {
+        choice = 'GAMBLE';
+        result = 'WIN';
+        resultStyle = 'color:#4fc3f7';
+      } else {
+        choice = 'GAMBLE';
+        result = 'LOSE';
+        resultStyle = 'color:#e0556a';
+      }
+      rows.push('<tr><td>Round '+r+'</td><td><strong>'+name+'</strong></td>'+
+        '<td>'+choice+'</td><td style="'+resultStyle+'">'+result+'</td>'+
+        '<td>$'+before.toFixed(2)+'</td><td>$'+after.toFixed(2)+'</td></tr>');
+    }
+  }
+  document.getElementById('roundLog').innerHTML = rows.join('');
+})();
+
+// === Chart with round slider ===
+let chart = null;
+const ctx = document.getElementById('chart').getContext('2d');
+const maxR = STATE.game_config.max_rounds;
+const allTraj = STATE.trajectories_with_start;
+const names = STATE.player_names;
+const fullDatasets = names.map((name, i) => ({
+  label: name,
+  data: (allTraj[name]||[]).map(p => ({x:p.round, y:p.assets})),
+  borderColor: COLORS[i%COLORS.length],
+  backgroundColor: COLORS[i%COLORS.length]+'22',
+  borderWidth: 2.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2, fill: false,
+}));
+
+function drawChart(maxRound) {
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: fullDatasets.map(ds => ({
+      ...ds,
+      data: ds.data.filter(pt => pt.x <= maxRound)
+    })) },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      scales: {
+        x: { type:'linear', title:{display:true,text:'Round',color:'#888'}, min:0, max:maxR, ticks:{stepSize:1,color:'#666'}, grid:{color:'#1a1a2e'} },
+        y: { title:{display:true,text:'Assets ($)',color:'#888'}, ticks:{color:'#666',callback:v=>'$'+v.toLocaleString()}, grid:{color:'#1a1a2e'} },
+      },
+      plugins: { legend: { labels: {color:'#c8c8d8',usePointStyle:true,padding:20} },
+        tooltip: { callbacks: { label: c => c.dataset.label+': $'+c.parsed.y.toFixed(2) } } },
+      interaction: { mode:'nearest',axis:'x',intersect:false },
+    },
+  });
+}
+
+const slider = document.getElementById('roundSlider');
+const label = document.getElementById('roundLabel');
+slider.max = STATE.current_round;
+slider.value = STATE.current_round;
+label.textContent = 'Round '+STATE.current_round+' / '+maxR;
+drawChart(STATE.current_round);
+
+slider.addEventListener('input', () => {
+  const v = parseInt(slider.value);
+  label.textContent = 'Round '+v+' / '+maxR;
+  drawChart(v);
+});
+</script>
+</body>
+</html>
