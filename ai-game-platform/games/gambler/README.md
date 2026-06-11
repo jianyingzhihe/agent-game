@@ -6,9 +6,37 @@
 
 ```bash
 cd ai-game-platform
-python -m games.gambler.arena 30        # 30 轮
-python -m games.gambler.arena 30 42     # 30 轮，随机种子 42
-python -m games.gambler.arena --resume  # 从上次中断恢复
+python -m games.gambler.arena                    # 使用默认 config.yaml
+python -m games.gambler.arena my_config.yaml     # 使用自定义配置
+python -m games.gambler.arena 30 42              # 30 轮，种子 42（兼容旧语法）
+python -m games.gambler.arena --resume           # 从上次中断恢复
+```
+
+所有游戏参数通过 `config.yaml` 配置：
+
+```yaml
+# Economy
+initial_assets: 50        # 初始资产
+daily_wage: 10            # 打工收入
+food_cost: 5              # 每日食物开销
+
+# Gamble
+win_probability: 0.3      # 赌博胜率
+win_multiplier: 3.0       # 赢时倍率
+loss_multiplier: 0.3      # 输时倍率
+
+# Study
+base_study_cost: 45       # 学费公式参数
+study_duration: 3         # 进修持续轮数
+
+# Medical Disaster
+illness_cost: 100         # 医疗费
+loan_interest_rate: 0.2   # 医疗贷款利息
+loan_repay_rounds: 20     # 医疗贷款还款期
+
+# Game
+max_rounds: 30            # 总轮数
+temperature: 0.7          # LLM 温度
 ```
 
 ## 核心规则

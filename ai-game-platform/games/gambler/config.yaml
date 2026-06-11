@@ -1,0 +1,29 @@
+# Gambler game configuration
+# All values shown are defaults. Edit to customize each session.
+
+# ---- Economy ----
+initial_assets: 50        # Starting money per player ($)
+daily_wage: 10            # Income per WORK action ($)
+food_cost: 5              # Daily food deduction ($). 3 missed = starve
+
+# ---- Gamble ----
+win_probability: 0.3      # Chance to win (0.0-1.0)
+win_multiplier: 3.0       # Asset multiplier on win
+loss_multiplier: 0.3      # Asset multiplier on lose
+
+# ---- Study ----
+base_study_cost: 45       # Tuition formula factor: max(5, 75 - 3 * current_wage)
+study_duration: 3         # Rounds locked with zero income
+
+# ---- Medical Disaster ----
+illness_cost: 100         # Medical bill per player ($). Hits ALL players once at round 10-25
+loan_interest_rate: 0.2   # Interest on medical loan (20%)
+loan_repay_rounds: 20     # Rounds to repay medical loan
+
+# ---- Game ----
+max_rounds: 30            # Total rounds per game
+temperature: 0.7          # LLM temperature (creativity vs consistency)
+
+# Run with: python -m games.gambler.arena [config_file]
+# Example:  python -m games.gambler.arena
+#           python -m games.gambler.arena my_config.yaml

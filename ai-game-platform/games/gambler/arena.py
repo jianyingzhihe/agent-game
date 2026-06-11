@@ -2,9 +2,10 @@
 
 Usage:
     cd ai-game-platform
-    python -m games.gambler.arena              # default: 20 rounds
-    python -m games.gambler.arena 30           # 30 rounds
-    python -m games.gambler.arena 20 42        # 20 rounds, random seed 42
+    python -m games.gambler.arena                    # default config
+    python -m games.gambler.arena my_config.yaml     # custom config
+    python -m games.gambler.arena my_config.yaml 30  # override max_rounds
+    python -m games.gambler.arena my_config.yaml 30 42  # + seed
 """
 
 import os
@@ -24,6 +25,8 @@ load_dotenv()
 env_file = PROJECT_ROOT / ".env"
 if env_file.exists():
     load_dotenv(env_file)
+
+import yaml
 
 from core.game_launcher import build_models_and_names, check_models, print_players
 from core.logger import GameLogger
@@ -135,19 +138,66 @@ def _stop_http_server(server):
     server.running = False
 
 
+def _load_config(path: Path) -> dict:
+    """Load game config from a YAML file. Returns empty dict if not found."""
+    if not path.exists():
+        print(Colors.color(f'  Config file not found: {path}, using defaults.', Colors.YELLOW))
+        return {}
+    with open(path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+        return cfg if isinstance(cfg, dict) else {}
+
+
 def run():
-    max_rounds = 20
-    seed = None
-    if len(sys.argv) > 1:
+    # Parse CLI: [config_file] [max_rounds] [seed]
+    args = [a for a in sys.argv[1:] if not a.startswith('--resume')]
+    resume = '--resume' in sys.argv
+
+    config_path = HERE / 'config.yaml'
+    cli_max_rounds = None
+    cli_seed = None
+    arg_offset = 0
+
+    # First arg: config file (if ends with .yaml/.yml) or max_rounds (if int)
+    if len(args) > 0:
+        if args[0].endswith('.yaml') or args[0].endswith('.yml'):
+            config_path = Path(args[0])
+            if not config_path.is_absolute():
+                config_path = Path.cwd() / config_path
+            arg_offset = 1
+        else:
+            try:
+                cli_max_rounds = int(args[0])
+                arg_offset = 1
+            except ValueError:
+                pass
+
+    # Remaining args
+    remaining = args[arg_offset:]
+    if len(remaining) > 0:
         try:
-            max_rounds = int(sys.argv[1])
+            cli_max_rounds = int(remaining[0])
         except ValueError:
             pass
-    if len(sys.argv) > 2:
+    if len(remaining) > 1:
         try:
-            seed = int(sys.argv[2])
+            cli_seed = int(remaining[1])
         except ValueError:
             pass
+
+    # Load config from YAML
+    config = _load_config(config_path)
+    print(Colors.dim(f'  Config: {config_path}'))
+
+    # CLI overrides
+    if cli_max_rounds is not None:
+        config['max_rounds'] = cli_max_rounds
+    if cli_seed is not None:
+        config['random_seed'] = cli_seed
+
+    config['state_file'] = str(HERE / 'ui_state.json')
+
+    max_rounds = int(config.get('max_rounds', 30))
 
     port = _find_port(DEFAULT_PORT)
     root_dir = str(PROJECT_ROOT)
@@ -182,13 +232,7 @@ def run():
     ]
     print_players(players)
 
-    config = {
-        'state_file': str(HERE / 'ui_state.json'),
-        'max_rounds': max_rounds,
-    }
-    if seed is not None:
-        config['random_seed'] = seed
-
+    seed = config.get('random_seed')
     if seed is not None:
         print(Colors.dim(f'  Random seed: {seed} (deterministic)'))
     print(Colors.dim(f'  {max_rounds} rounds, same roll per round for all gamblers'))
