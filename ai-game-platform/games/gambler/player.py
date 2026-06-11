@@ -7,7 +7,7 @@ from core.models.base import ModelInterface
 
 
 class GamblerPlayer(Player):
-    """A gambler who chooses between working and gambling each round."""
+    """A gambler who chooses between working, gambling, and studying each round."""
 
     def __init__(self, name: str, model: ModelInterface, assets: float = 100, persona: str = ""):
         super().__init__(name, model, persona)
@@ -18,6 +18,7 @@ class GamblerPlayer(Player):
         self.work_count = 0
         self.gamble_wins = 0
         self.gamble_losses = 0
+        self.study_count = 0      # times study completed
         self.bankrupt = False
         self.starved = False
         # Illness / loan state
@@ -26,6 +27,9 @@ class GamblerPlayer(Player):
         self.loan_repay_remaining = 0
         # Hunger state
         self.hunger_streak = 0  # consecutive rounds without food
+        # Study state
+        self.wage_bonus = 0.0  # starts at $0, +$10 per completed study
+        self.studying_remaining = 0  # rounds left in current study (0 = not studying)
 
     def record(self, round_num: int, choice: str, result: str, assets_after: float):
         self.history.append({
@@ -36,15 +40,47 @@ class GamblerPlayer(Player):
         })
         if choice == "WORK":
             self.work_count += 1
-        else:
+        elif choice == "GAMBLE":
             self.gamble_count += 1
             if result == "WIN":
                 self.gamble_wins += 1
-            else:
+            elif result == "LOSE":
                 self.gamble_losses += 1
+        # STUDY doesn't count as work or gamble
         self.assets = assets_after
         if self.assets <= 0:
             self.bankrupt = True
+
+    def start_study(self, cost: float, duration: int) -> dict:
+        """Begin a study course. Pay cost, set remaining duration."""
+        if self.assets < cost:
+            return {"event": "study_fail", "reason": "cant_afford"}
+        self.assets -= cost
+        self.studying_remaining = duration
+        return {"event": "study_start", "cost": cost, "duration": duration}
+
+    def advance_study(self) -> dict:
+        """Called each round during study. Returns event if completed or ongoing."""
+        if self.studying_remaining <= 0:
+            return {"event": "study_none"}
+        self.studying_remaining -= 1
+        if self.studying_remaining <= 0:
+            self.wage_bonus += 10.0
+            self.study_count += 1
+            return {"event": "study_complete", "new_bonus": self.wage_bonus, "new_wage": 10.0 + self.wage_bonus}
+        return {"event": "study_ongoing", "remaining": self.studying_remaining}
+
+    def cancel_study(self) -> dict:
+        """Study interrupted (e.g. can't afford food). Lose progress."""
+        if self.studying_remaining > 0:
+            remaining = self.studying_remaining
+            self.studying_remaining = 0
+            return {"event": "study_cancelled", "wasted_rounds": remaining}
+        return {"event": "study_none"}
+
+    @property
+    def effective_wage(self) -> float:
+        return 10.0 + self.wage_bonus  # base wage + bonus from study
 
     def apply_illness(self, cost: float, interest_rate: float, repay_rounds: int):
         """Player gets sick. Pay if possible, otherwise take a loan."""
@@ -58,7 +94,7 @@ class GamblerPlayer(Player):
             self.loan_balance = loan_amount
             self.loan_repay_remaining = repay_rounds
             self.assets = 0  # all assets go to medical bill
-            return {"event": "illness_loan", "paid": self.assets + shortfall - loan_amount + loan_amount,
+            return {"event": "illness_loan", "paid": self.assets,
                     "shortfall": shortfall, "loan": loan_amount, "interest_rate": interest_rate}
 
     def repay_loan(self) -> float:
@@ -84,12 +120,18 @@ class GamblerPlayer(Player):
             self.hunger_streak = 0  # ate today, reset
             return {"event": "fed", "paid": cost}
         else:
+            # Can't afford food — study is also interrupted
             self.hunger_streak += 1
+            result: dict = {"event": "hungry", "streak": self.hunger_streak, "shortfall": cost - self.assets}
             if self.hunger_streak >= 3:
                 self.starved = True
                 self.bankrupt = True
-                return {"event": "starved", "streak": self.hunger_streak}
-            return {"event": "hungry", "streak": self.hunger_streak, "shortfall": cost - self.assets}
+                result = {"event": "starved", "streak": self.hunger_streak}
+            # Hunger cancels study
+            if self.studying_remaining > 0:
+                self.studying_remaining = 0
+                result["study_cancelled"] = True
+            return result
 
     @property
     def profit(self) -> float:
