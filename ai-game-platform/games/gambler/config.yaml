@@ -23,19 +23,55 @@ loan_repay_rounds: 20     # Rounds to repay medical loan
 # ---- Sanity & Health ----
 initial_san: 100          # Starting SAN (sanity) per player
 initial_hp: 100           # Starting HP (health) per player
-san_hunger_penalty: 15    # SAN lost per hungry day
-hp_hunger_penalty: 10     # HP lost per hungry day
+san_hunger_penalty: 15    # SAN lost per hungry day (day 1)
+hp_hunger_penalty: 10     # HP lost per hungry day (day 1)
+san_hunger_streak_penalty: 20  # SAN lost per hungry day (day 2+)
+hp_hunger_streak_penalty: 15   # HP lost per hungry day (day 2+)
+
+# ---- Work Fatigue ----
+work_fatigue_threshold: 3      # Consecutive WORK rounds before fatigue kicks in
+work_fatigue_san_penalty: 3    # SAN lost per round when fatigued
+work_fatigue_hp_penalty: 2     # HP lost per round when fatigued
+
+# ---- Gamble Stress ----
+san_gamble_win_bonus: 4         # SAN gained on GAMBLE win (excitement)
+san_gamble_loss_penalty: 14     # SAN lost on GAMBLE loss (despair)
+san_consecutive_gamble_penalty: 3  # Extra SAN lost per consecutive gamble round
+
+# ---- Study Stress ----
+san_study_start_cost: 5         # SAN lost immediately when starting STUDY
+san_study_round_penalty: 4      # SAN lost per round during STUDY
+hp_study_round_penalty: 2       # HP lost per round during STUDY
+san_study_complete_bonus: 10    # SAN restored when STUDY completes
+
+# ---- Debt Stress ----
+san_disaster_paid_loss: 10      # SAN lost when paying medical bill (can afford)
+san_disaster_loan_loss: 25      # SAN lost when taking a medical loan (can't afford)
+san_debt_round_penalty: 2       # SAN lost per round while carrying loan debt
+san_loan_repaid_bonus: 10       # SAN restored when loan is fully repaid
 
 # ---- Minor Illness ----
-minor_illness_hp_threshold: 30   # HP below this triggers minor illness check each round
-minor_illness_cost: 20           # $ cost per minor illness episode
-minor_illness_san_loss: 20       # SAN lost per minor illness episode
+minor_illness_probabilistic: true    # true = probability-based, false = always trigger
+minor_illness_hp_threshold: 30       # HP below this triggers minor illness check each round
+minor_illness_cost: 20               # $ cost per minor illness episode
+minor_illness_san_loss: 15           # SAN lost per minor illness episode
 
 # ---- Self-Care ----
-goods_cost: 5             # Cost to buy goods (restores SAN)
+goods_cost: 8             # Cost to buy goods (restores SAN)
 goods_san_restore: 20     # SAN restored per BUY_GOODS action
+goods_high_san_penalty: 0.5  # Restoration multiplier when SAN >= 80
+
 medicine_cost: 15         # Cost to buy medicine (restores HP)
 medicine_hp_restore: 30   # HP restored per BUY_MEDICINE action
+medicine_high_hp_penalty: 0.5  # Restoration multiplier when HP >= 80
+
+# ---- REST ----
+rest_san_restore: 8       # SAN restored by REST action (free, no income)
+rest_hp_restore: 8        # HP restored by REST action
+
+# ---- Happiness Scoring ----
+happiness_wealth_log_base: 301  # log base for wealth score normalization
+happiness_base_per_round: 10    # Life points earned per round just for surviving
 
 # ---- Game ----
 max_rounds: 30            # Total rounds per game

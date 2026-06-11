@@ -1,5 +1,6 @@
 """Gambler player with asset tracking, sanity/health, and decision history."""
 
+import math
 from typing import List
 
 from core.player import Player
@@ -21,6 +22,7 @@ class GamblerPlayer(Player):
         self.study_count = 0      # times study completed
         self.goods_count = 0      # times bought goods
         self.medicine_count = 0   # times bought medicine
+        self.rest_count = 0       # times rested
         self.bankrupt = False
         self.starved = False
         self.insane = False       # SAN reached 0
@@ -37,6 +39,13 @@ class GamblerPlayer(Player):
         # Study state
         self.wage_bonus = 0.0  # starts at $0, +$10 per completed study
         self.studying_remaining = 0  # rounds left in current study (0 = not studying)
+        # ---- Life Quality System ----
+        self.life_points = 0.0           # accumulated happiness score (primary ranking)
+        self.consecutive_work = 0        # consecutive WORK rounds (triggers fatigue)
+        self.consecutive_gamble = 0      # consecutive GAMBLE rounds (triggers stress)
+        self.total_hunger_days = 0       # total days gone hungry (final score penalty)
+        self.happy_rounds = 0            # rounds with SAN >= 90
+        self.medicine_immune = False     # true if BUY_MEDICINE this round (blocks minor illness)
 
     def record(self, round_num: int, choice: str, result: str, assets_after: float):
         self.history.append({
@@ -47,16 +56,28 @@ class GamblerPlayer(Player):
         })
         if choice == "WORK":
             self.work_count += 1
+            self.consecutive_work += 1
+            self.consecutive_gamble = 0
         elif choice == "GAMBLE":
             self.gamble_count += 1
+            self.consecutive_gamble += 1
+            self.consecutive_work = 0
             if result == "WIN":
                 self.gamble_wins += 1
             elif result == "LOSE":
                 self.gamble_losses += 1
         elif choice == "BUY_GOODS":
             self.goods_count += 1
+            self.consecutive_work = 0
+            self.consecutive_gamble = 0
         elif choice == "BUY_MEDICINE":
             self.medicine_count += 1
+            self.consecutive_work = 0
+            self.consecutive_gamble = 0
+        elif choice == "REST":
+            self.rest_count += 1
+            self.consecutive_work = 0
+            self.consecutive_gamble = 0
         # STUDY doesn't count as work or gamble
         self.assets = assets_after
         if self.assets <= 0:
@@ -70,6 +91,8 @@ class GamblerPlayer(Player):
             return {"event": "study_fail", "reason": "cant_afford"}
         self.assets -= cost
         self.studying_remaining = duration
+        self.consecutive_work = 0
+        self.consecutive_gamble = 0
         return {"event": "study_start", "cost": cost, "duration": duration}
 
     def advance_study(self) -> dict:
@@ -140,6 +163,7 @@ class GamblerPlayer(Player):
         else:
             # Can't afford food — go hungry
             self.hunger_streak += 1
+            self.total_hunger_days += 1
             self.san = max(0.0, self.san - san_hunger)
             self.hp = max(0.0, self.hp - hp_hunger)
             result: dict = {"event": "hungry", "streak": self.hunger_streak,
@@ -167,13 +191,24 @@ class GamblerPlayer(Player):
                 result["study_cancelled"] = True
             return result
 
-    # ---- Minor Illness (triggered by low HP) ----
+    # ---- Minor Illness (triggered by low HP, probabilistic) ----
 
-    def check_minor_illness(self, threshold: float, cost: float, san_loss: float) -> dict | None:
-        """If HP < threshold, trigger a minor illness: pay cost, lose SAN.
+    def check_minor_illness(self, threshold: float, cost: float, san_loss: float,
+                            roll: float = 0.0, probabilistic: bool = True) -> dict | None:
+        """If HP < threshold, probabilistically trigger a minor illness.
+        If medicine_immune is set, skip this round.
         Returns event dict or None."""
         if self.hp >= threshold:
             return None
+        # If bought medicine this round, immune
+        if self.medicine_immune:
+            return None
+        # Probabilistic: lower HP = higher chance
+        if probabilistic:
+            chance = (threshold - self.hp) / threshold
+            if roll >= chance:
+                return None
+        # Trigger illness
         self.minor_illness_count += 1
         self.san = max(0.0, self.san - san_loss)
         actual_cost = min(cost, self.assets)
@@ -188,21 +223,67 @@ class GamblerPlayer(Player):
 
     # ---- Goods & Medicine ----
 
-    def buy_goods(self, cost: float, san_restore: float) -> dict:
-        """Buy goods to restore sanity. Returns event dict."""
+    def buy_goods(self, cost: float, san_restore: float,
+                  high_san_penalty: float = 0.5) -> dict:
+        """Buy goods to restore sanity. Less effective when SAN already high.
+        Returns event dict."""
         if self.assets < cost:
             return {"event": "goods_fail", "reason": "cant_afford"}
         self.assets -= cost
-        self.san = min(100.0, self.san + san_restore)
-        return {"event": "goods_bought", "cost": cost, "san_restored": san_restore, "san": self.san}
+        actual_restore = san_restore
+        if self.san >= 80:
+            actual_restore = san_restore * high_san_penalty
+        self.san = min(100.0, self.san + actual_restore)
+        self.consecutive_work = 0
+        self.consecutive_gamble = 0
+        return {"event": "goods_bought", "cost": cost, "san_restored": actual_restore, "san": self.san}
 
-    def buy_medicine(self, cost: float, hp_restore: float) -> dict:
-        """Buy medicine to restore health. Returns event dict."""
+    def buy_medicine(self, cost: float, hp_restore: float,
+                     high_hp_penalty: float = 0.5) -> dict:
+        """Buy medicine to restore health. Less effective when HP already high.
+        Grants immunity from minor illness for this round.
+        Returns event dict."""
         if self.assets < cost:
             return {"event": "medicine_fail", "reason": "cant_afford"}
         self.assets -= cost
+        actual_restore = hp_restore
+        if self.hp >= 80:
+            actual_restore = hp_restore * high_hp_penalty
+        self.hp = min(100.0, self.hp + actual_restore)
+        self.medicine_immune = True  # blocks minor illness this round
+        self.consecutive_work = 0
+        self.consecutive_gamble = 0
+        return {"event": "medicine_bought", "cost": cost, "hp_restored": actual_restore, "hp": self.hp}
+
+    # ---- REST ----
+
+    def rest(self, san_restore: float = 8.0, hp_restore: float = 8.0) -> dict:
+        """Take a round off. Free, no income, restores small SAN/HP.
+        Resets consecutive work/gamble counters."""
+        self.san = min(100.0, self.san + san_restore)
         self.hp = min(100.0, self.hp + hp_restore)
-        return {"event": "medicine_bought", "cost": cost, "hp_restored": hp_restore, "hp": self.hp}
+        self.consecutive_work = 0
+        self.consecutive_gamble = 0
+        return {"event": "rested", "san_restored": san_restore, "hp_restored": hp_restore,
+                "san": self.san, "hp": self.hp}
+
+    # ---- Status queries ----
+
+    @property
+    def san_status(self) -> str:
+        """SAN threshold status label."""
+        if self.san >= 80:   return "happy"
+        elif self.san >= 50: return "stable"
+        elif self.san >= 30: return "anxious"
+        else:                return "breaking"
+
+    @property
+    def hp_status(self) -> str:
+        """HP threshold status label."""
+        if self.hp >= 80:   return "healthy"
+        elif self.hp >= 50: return "normal"
+        elif self.hp >= 30: return "weak"
+        else:               return "critical"
 
     # ----
 

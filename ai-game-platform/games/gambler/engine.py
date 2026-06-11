@@ -1,11 +1,22 @@
-"""Gambler game engine — each round players choose WORK, GAMBLE, STUDY, BUY_GOODS, or BUY_MEDICINE.
+"""Gambler game engine — each round players choose WORK, GAMBLE, STUDY, BUY_GOODS, BUY_MEDICINE, or REST.
 
 Shared-randomness arena mode: one roll per round, so all gamblers
 in round N face the same luck.  Writes ui_state.json for live viewer.
 All players are queried concurrently within each round (ThreadPoolExecutor).
+
+Turn order (per round):
+  1. Player decisions (LLM query + immediate money movement)
+  2. Food deduction (hunger / SAN+HP loss)
+  3. Loan repayment
+  4. Medical disaster (if triggered)
+  5. Self-care effects (BUY_GOODS/BUY_MEDICINE/REST SAN+HP restoration)
+  6. Minor illness check (probabilistic)
+  7. Study advancement
+  8. Life points accumulation
 """
 
 import json
+import math
 import os
 import random
 import time
@@ -72,13 +83,52 @@ class GamblerEngine:
         self.initial_hp = float(self.config.get("initial_hp", 100))
         self.san_hunger_penalty = float(self.config.get("san_hunger_penalty", 15))
         self.hp_hunger_penalty = float(self.config.get("hp_hunger_penalty", 10))
+        self.san_hunger_streak_penalty = float(self.config.get("san_hunger_streak_penalty", 20))
+        self.hp_hunger_streak_penalty = float(self.config.get("hp_hunger_streak_penalty", 15))
+
+        # ---- Work Fatigue ----
+        self.work_fatigue_threshold = int(self.config.get("work_fatigue_threshold", 3))
+        self.work_fatigue_san_penalty = float(self.config.get("work_fatigue_san_penalty", 3))
+        self.work_fatigue_hp_penalty = float(self.config.get("work_fatigue_hp_penalty", 2))
+
+        # ---- Gamble Stress ----
+        self.san_gamble_win_bonus = float(self.config.get("san_gamble_win_bonus", 4))
+        self.san_gamble_loss_penalty = float(self.config.get("san_gamble_loss_penalty", 14))
+        self.san_consecutive_gamble_penalty = float(self.config.get("san_consecutive_gamble_penalty", 3))
+
+        # ---- Study Stress ----
+        self.san_study_start_cost = float(self.config.get("san_study_start_cost", 5))
+        self.san_study_round_penalty = float(self.config.get("san_study_round_penalty", 4))
+        self.hp_study_round_penalty = float(self.config.get("hp_study_round_penalty", 2))
+        self.san_study_complete_bonus = float(self.config.get("san_study_complete_bonus", 10))
+
+        # ---- Debt Stress ----
+        self.san_disaster_paid_loss = float(self.config.get("san_disaster_paid_loss", 10))
+        self.san_disaster_loan_loss = float(self.config.get("san_disaster_loan_loss", 25))
+        self.san_debt_round_penalty = float(self.config.get("san_debt_round_penalty", 2))
+        self.san_loan_repaid_bonus = float(self.config.get("san_loan_repaid_bonus", 10))
+
+        # ---- Minor Illness ----
+        self.minor_illness_probabilistic = bool(self.config.get("minor_illness_probabilistic", True))
         self.minor_illness_hp_threshold = float(self.config.get("minor_illness_hp_threshold", 30))
         self.minor_illness_cost = float(self.config.get("minor_illness_cost", 20))
-        self.minor_illness_san_loss = float(self.config.get("minor_illness_san_loss", 20))
-        self.goods_cost = float(self.config.get("goods_cost", 5))
+        self.minor_illness_san_loss = float(self.config.get("minor_illness_san_loss", 15))
+
+        # ---- Self-Care ----
+        self.goods_cost = float(self.config.get("goods_cost", 8))
         self.goods_san_restore = float(self.config.get("goods_san_restore", 20))
+        self.goods_high_san_penalty = float(self.config.get("goods_high_san_penalty", 0.5))
         self.medicine_cost = float(self.config.get("medicine_cost", 15))
         self.medicine_hp_restore = float(self.config.get("medicine_hp_restore", 30))
+        self.medicine_high_hp_penalty = float(self.config.get("medicine_high_hp_penalty", 0.5))
+
+        # ---- REST ----
+        self.rest_san_restore = float(self.config.get("rest_san_restore", 8))
+        self.rest_hp_restore = float(self.config.get("rest_hp_restore", 8))
+
+        # ---- Happiness Scoring ----
+        self.happiness_wealth_log_base = float(self.config.get("happiness_wealth_log_base", 301))
+        self.happiness_base_per_round = float(self.config.get("happiness_base_per_round", 10))
 
         # Shared-randomness arena mode
         seed = self.config.get("random_seed")
@@ -94,7 +144,7 @@ class GamblerEngine:
 
     def _player_study_cost(self, player: GamblerPlayer) -> float:
         """Tuition adjusts so total cost stays ~$90 (payback ~9 rounds).
-        Higher wage → more lost wages → lower tuition to compensate."""
+        Higher wage — more lost wages — lower tuition to compensate."""
         effective_wage = self.daily_wage + player.wage_bonus
         tuition = 75.0 - 3.0 * effective_wage  # target: total cost ~$90
         return max(5.0, tuition)  # minimum $5 tuition
@@ -125,8 +175,6 @@ class GamblerEngine:
         # SAN or HP will hit 0 regardless
         if player.hunger_streak >= 2:
             if player.san <= self.san_hunger_penalty and player.hp <= self.hp_hunger_penalty:
-                # Can't afford food AND will die from SAN/HP loss regardless of income
-                # since food was already deducted this round
                 after_work = player.assets + effective_wage
                 if after_work < food_next:
                     return {
@@ -176,8 +224,8 @@ class GamblerEngine:
                 tag = f"  [{', '.join(tags)}]"
             else:
                 tag = ""
-            san_str = f" SAN:{p.san:.0f}" if p.san < 80 else ""
-            hp_str = f" HP:{p.hp:.0f}" if p.hp < 80 else ""
+            san_str = f" SAN:{p.san:.0f}({p.san_status})"
+            hp_str = f" HP:{p.hp:.0f}({p.hp_status})"
             lines.append(f"  {icon}. {p.name}: ${p.assets:,.2f}{san_str}{hp_str}{tag}")
         return "\n".join(lines)
 
@@ -186,11 +234,31 @@ class GamblerEngine:
             return "(no history yet)"
         lines = []
         for h in player.history[-8:]:
-            icon = {"WIN": "WIN", "LOSE": "LOSE", "EARNED": "SAFE"}.get(h["result"], h["result"])
+            icon = {"WIN": "WIN", "LOSE": "LOSE", "EARNED": "SAFE",
+                    "GOODS_BOUGHT": "GOODS", "MEDICINE_BOUGHT": "MEDICINE",
+                    "RESTED": "RESTED"}.get(h["result"], h["result"])
             lines.append(
                 f"  Round {h['round']}: {h['choice']} → {icon} → ${h['assets_after']:,.2f}"
             )
         return "\n".join(lines)
+
+    def _player_status(self, player: GamblerPlayer) -> str:
+        """Generate a compact status summary for the decision prompt."""
+        parts = [
+            f"SAN: {player.san:.0f}/100 ({player.san_status})",
+            f"HP: {player.hp:.0f}/100 ({player.hp_status})",
+        ]
+        if player.consecutive_work >= self.work_fatigue_threshold:
+            parts.append(f"Work fatigue: {player.consecutive_work} rounds (penalty active)")
+        elif player.consecutive_work > 0:
+            parts.append(f"Consecutive work: {player.consecutive_work} rounds")
+        if player.consecutive_gamble > 0:
+            parts.append(f"Consecutive gamble: {player.consecutive_gamble} rounds")
+        if player.loan_balance > 0:
+            parts.append(f"Loan: ${player.loan_balance:,.2f} ({player.loan_repay_remaining}r left)")
+        if player.hunger_streak > 0:
+            parts.append(f"Hunger streak: {player.hunger_streak}/3")
+        return " | ".join(parts)
 
     def setup(self) -> None:
         for p in self.players:
@@ -205,6 +273,8 @@ class GamblerEngine:
             p.gamble_losses = 0
             p.goods_count = 0
             p.medicine_count = 0
+            p.rest_count = 0
+            p.study_count = 0
             p.bankrupt = False
             p.starved = False
             p.insane = False
@@ -214,15 +284,24 @@ class GamblerEngine:
             p.hunger_streak = 0
             p.wage_bonus = 0.0
             p.studying_remaining = 0
-            p.study_count = 0
             p.minor_illness_count = 0
-
+            # Life quality fields
+            p.life_points = 0.0
+            p.consecutive_work = 0
+            p.consecutive_gamble = 0
+            p.total_hunger_days = 0
+            p.happy_rounds = 0
+            p.medicine_immune = False
+        self.round = 0
+        self.finished = False
+        self.winner = None
         self._illness_triggered = False
         self._snapshots = []
 
         if self.logger:
-            self.logger.log_event("game_start", {
-                "players": [{"name": p.name, "initial_assets": self.initial_assets} for p in self.players],
+            self.logger.log_game_start(self.players)
+            self.logger.set_config({
+                "initial_assets": self.initial_assets,
                 "daily_wage": self.daily_wage,
                 "win_probability": self.win_probability,
                 "win_multiplier": self.win_multiplier,
@@ -233,7 +312,21 @@ class GamblerEngine:
 
         self._write_ui_state()
 
+    # ===================================================================
+    #  Main turn loop
+    # ===================================================================
+
     def step(self) -> dict:
+        """Execute one round. New order:
+        1. Player decisions (LLM + money movement)
+        2. Food deduction
+        3. Loan repayment
+        4. Medical disaster
+        5. Self-care effects (BUY_GOODS/BUY_MEDICINE/REST SAN/HP restore)
+        6. Minor illness check (probabilistic)
+        7. Study advancement
+        8. Life points accumulation
+        """
         self.round += 1
         active = [p for p in self.players if not p.bankrupt]
 
@@ -244,109 +337,19 @@ class GamblerEngine:
 
         round_result = {"round": self.round, "actions": [], "events": []}
 
-        # Track per-player spending this round
-        spending: dict[str, dict] = {p.name: {"food": 0.0, "loan": 0.0, "medical": 0.0,
-                                               "minor_illness": 0.0, "goods": 0.0, "medicine": 0.0}
-                                     for p in active}
+        # Clear medicine_immune flags from previous rounds
+        for p in active:
+            p.medicine_immune = False
 
-        # ---- 1. Process loan repayments ----
-        for player in active:
-            if player.loan_balance > 0:
-                paid = player.repay_loan()
-                if paid > 0:
-                    spending[player.name]["loan"] = paid
-                    round_result["events"].append({
-                        "type": "loan_repay",
-                        "player": player.name,
-                        "paid": paid,
-                        "remaining_balance": player.loan_balance,
-                        "remaining_rounds": player.loan_repay_remaining,
-                    })
-
-        # ---- 2. Medical disaster — ALL players get sick ----
-        if not self._illness_triggered and self.round == self._illness_round:
-            self._illness_triggered = True
-            for player in active:
-                illness_result = player.apply_illness(
-                    self.illness_cost, self.loan_interest_rate, self.loan_repay_rounds
-                )
-                illness_result["type"] = "illness"
-                illness_result["player"] = player.name
-                illness_result["round"] = self.round
-                illness_result["cost"] = self.illness_cost
-                round_result["events"].append(illness_result)
-                spending[player.name]["medical"] = self.illness_cost
-                if self.logger:
-                    self.logger.log_event(f"round_{self.round}_illness_{player.name}", illness_result)
-
-        # ---- 3. Daily food cost (with SAN/HP penalty for hunger) ----
-        for player in active:
-            food_result = player.pay_food(self.food_cost, self.san_hunger_penalty, self.hp_hunger_penalty)
-            ev_type = food_result["event"]
-            if ev_type == "fed":
-                spending[player.name]["food"] = self.food_cost
-            elif ev_type == "hungry":
-                round_result["events"].append({
-                    "type": "hungry",
-                    "player": player.name,
-                    "streak": food_result["streak"],
-                    "san_lost": food_result.get("san_lost", 0),
-                    "hp_lost": food_result.get("hp_lost", 0),
-                })
-            elif ev_type in ("starved", "insane", "hp_death"):
-                round_result["events"].append({
-                    "type": ev_type,
-                    "player": player.name,
-                    "streak": food_result.get("streak", 0),
-                })
-                if self.logger:
-                    self.logger.log_event(f"round_{self.round}_{ev_type}", {
-                        "player": player.name,
-                    })
-
-        # ---- 3b. Minor illness check (HP below threshold) ----
-        for player in list(active):
-            if not player.bankrupt:
-                mi = player.check_minor_illness(
-                    self.minor_illness_hp_threshold,
-                    self.minor_illness_cost,
-                    self.minor_illness_san_loss,
-                )
-                if mi:
-                    mi["player"] = player.name
-                    mi["type"] = "minor_illness"
-                    mi["round"] = self.round
-                    round_result["events"].append(mi)
-                    spending[player.name]["minor_illness"] = mi["cost"]
-
-        # ---- 4. Advance study for players already studying ----
-        for player in active:
-            if player.studying_remaining > 0:
-                study_result = player.advance_study()
-                if study_result["event"] == "study_complete":
-                    round_result["events"].append({
-                        "type": "study_complete",
-                        "player": player.name,
-                        "new_bonus": player.wage_bonus,
-                        "new_wage": 10.0 + player.wage_bonus,
-                    })
-
-        # Store spending in round_result for display
-        round_result["spending"] = {k: dict(v) for k, v in spending.items()}
-
-        # Refresh active list
-        active = [p for p in active if not p.bankrupt]
-
-        if not active:
-            self.finished = True
-            self._write_ui_state()
-            return round_result
+        # ================================================================
+        #  Step 1: Player decisions (LLM queries + immediate money movement)
+        # ================================================================
 
         # Split active players: those studying vs. those making decisions
         studying_players = [p for p in active if p.studying_remaining > 0]
         deciding_players = [p for p in active if p.studying_remaining <= 0]
 
-        # Fast path: auto-decide for players whose choice is forced
+        # Fast path: auto-decide for doomed players
         auto_results: dict[str, tuple[dict, float]] = {}
         need_api = []
         for player in deciding_players:
@@ -359,12 +362,14 @@ class GamblerEngine:
         # Shared roll for this round
         shared_roll = self._shared_rolls[self.round - 1]
 
-        # Build prompts for players who actually need an API call
+        # Build prompts for players who need an API call
         order = list(need_api)
         random.shuffle(order)
         tasks = []
         for player in order:
-            sp = spending.get(player.name, {})
+            # Upcoming deductions the player should plan for
+            loan_next = (player.loan_balance / max(player.loan_repay_remaining, 1)
+                         if player.loan_balance > 0 else 0.0)
             prompt = decision_prompt(
                 player_name=player.name,
                 assets=player.assets,
@@ -381,9 +386,7 @@ class GamblerEngine:
                 sick=player.sick,
                 hunger_streak=player.hunger_streak,
                 food_cost=self.food_cost,
-                spent_food=sp.get("food", 0),
-                spent_loan=sp.get("loan", 0),
-                spent_medical=sp.get("medical", 0),
+                loan_next=loan_next,
                 wage_bonus=player.wage_bonus,
                 studying_remaining=player.studying_remaining,
                 study_cost=self._player_study_cost(player),
@@ -391,13 +394,23 @@ class GamblerEngine:
                 disaster_warning=not self._illness_triggered,
                 san=player.san,
                 hp=player.hp,
+                san_status=player.san_status,
+                hp_status=player.hp_status,
+                consecutive_work=player.consecutive_work,
+                consecutive_gamble=player.consecutive_gamble,
+                work_fatigue_threshold=self.work_fatigue_threshold,
                 san_hunger_penalty=self.san_hunger_penalty,
                 hp_hunger_penalty=self.hp_hunger_penalty,
                 minor_illness_threshold=self.minor_illness_hp_threshold,
                 goods_cost=self.goods_cost,
                 goods_san_restore=self.goods_san_restore,
+                goods_high_san_penalty=self.goods_high_san_penalty,
                 medicine_cost=self.medicine_cost,
                 medicine_hp_restore=self.medicine_hp_restore,
+                medicine_high_hp_penalty=self.medicine_high_hp_penalty,
+                rest_san_restore=self.rest_san_restore,
+                rest_hp_restore=self.rest_hp_restore,
+                life_points=player.life_points,
             )
             tasks.append((player, prompt))
 
@@ -418,8 +431,20 @@ class GamblerEngine:
                         results[name] = ({"choice": "WORK", "reason": f"ERROR: {e}"}, 0.0)
         round_elapsed = time.time() - round_t0
 
+        # Deferred self-care: record intentions, apply effects in step 5
+        deferred_self_care: dict[str, str] = {}  # player_name -> "goods" | "medicine" | "rest"
+
         # Auto-record actions for studying players
         for player in studying_players:
+            # Apply study round SAN/HP penalties
+            player.san = max(0.0, player.san - self.san_study_round_penalty)
+            player.hp = max(0.0, player.hp - self.hp_study_round_penalty)
+            if player.san <= 0:
+                player.insane = True
+                player.bankrupt = True
+            if player.hp <= 0:
+                player.bankrupt = True
+
             player.history.append({
                 "round": self.round,
                 "choice": "STUDY",
@@ -445,8 +470,24 @@ class GamblerEngine:
 
             assets_before = player.assets
 
-            if "BUY_GOODS" in choice:
-                gresult = player.buy_goods(self.goods_cost, self.goods_san_restore)
+            if "REST" in choice and "BUY_GOODS" not in choice and "BUY_MEDICINE" not in choice \
+               and "STUDY" not in choice and "GAMBLE" not in choice and "WORK" not in choice:
+                # REST: defer SAN/HP restore to step 5, no money movement, no income
+                deferred_self_care[player.name] = "rest"
+                player.history.append({
+                    "round": self.round, "choice": "REST",
+                    "result": "RESTED", "assets_after": player.assets,
+                })
+                round_result["actions"].append({
+                    "player": player.name, "choice": "REST",
+                    "result": "RESTED (SAN/HP restore in step 5)",
+                    "reason": reason, "assets_before": assets_before,
+                    "assets_after": player.assets, "elapsed": elapsed,
+                })
+
+            elif "BUY_GOODS" in choice:
+                gresult = player.buy_goods(self.goods_cost, self.goods_san_restore,
+                                           self.goods_high_san_penalty)
                 if gresult["event"] == "goods_fail":
                     # Fall back to WORK
                     effective_wage = self.daily_wage + player.wage_bonus
@@ -454,6 +495,9 @@ class GamblerEngine:
                     result = "EARNED"
                     player.record(self.round, "WORK", result, new_assets)
                     reason = f"Wanted BUY_GOODS but can't afford. Fell back to WORK. {reason}"
+                    # Apply work fatigue
+                    self._apply_work_fatigue(player)
+                    choice = "WORK"
                 else:
                     new_assets = player.assets
                     result = "GOODS_BOUGHT"
@@ -464,23 +508,25 @@ class GamblerEngine:
                     player.assets = new_assets
                     if player.assets <= 0:
                         player.bankrupt = True
-                    spending[player.name]["goods"] = self.goods_cost
                     round_result["events"].append({
                         "type": "goods_bought",
                         "player": player.name,
                         "cost": self.goods_cost,
-                        "san_restored": self.goods_san_restore,
+                        "san_restored": gresult["san_restored"],
                         "san": player.san,
                     })
 
             elif "BUY_MEDICINE" in choice:
-                mresult = player.buy_medicine(self.medicine_cost, self.medicine_hp_restore)
+                mresult = player.buy_medicine(self.medicine_cost, self.medicine_hp_restore,
+                                              self.medicine_high_hp_penalty)
                 if mresult["event"] == "medicine_fail":
                     effective_wage = self.daily_wage + player.wage_bonus
                     new_assets = player.assets + effective_wage
                     result = "EARNED"
                     player.record(self.round, "WORK", result, new_assets)
                     reason = f"Wanted BUY_MEDICINE but can't afford. Fell back to WORK. {reason}"
+                    self._apply_work_fatigue(player)
+                    choice = "WORK"
                 else:
                     new_assets = player.assets
                     result = "MEDICINE_BOUGHT"
@@ -491,12 +537,11 @@ class GamblerEngine:
                     player.assets = new_assets
                     if player.assets <= 0:
                         player.bankrupt = True
-                    spending[player.name]["medicine"] = self.medicine_cost
                     round_result["events"].append({
                         "type": "medicine_bought",
                         "player": player.name,
                         "cost": self.medicine_cost,
-                        "hp_restored": self.medicine_hp_restore,
+                        "hp_restored": mresult["hp_restored"],
                         "hp": player.hp,
                     })
 
@@ -507,15 +552,18 @@ class GamblerEngine:
                     result = "EARNED"
                     player.record(self.round, "WORK", result, new_assets)
                     reason = f"Already studying, so WORK instead. {reason}"
+                    self._apply_work_fatigue(player)
+                    choice = "WORK"
                 else:
-                    scost = self._player_study_cost(player)
-                    study_result = player.start_study(scost, self.study_duration)
-                    if study_result["event"] == "study_fail":
+                    sresult = player.start_study(self._player_study_cost(player), self.study_duration)
+                    if sresult["event"] == "study_fail":
                         effective_wage = self.daily_wage + player.wage_bonus
                         new_assets = player.assets + effective_wage
                         result = "EARNED"
                         player.record(self.round, "WORK", result, new_assets)
-                        reason = f"Wanted STUDY but can't afford ${scost:,.0f}. Fell back to WORK. {reason}"
+                        reason = f"Wanted STUDY but can't afford. Fell back to WORK. {reason}"
+                        self._apply_work_fatigue(player)
+                        choice = "WORK"
                     else:
                         new_assets = player.assets
                         result = "STUDY_START"
@@ -526,10 +574,15 @@ class GamblerEngine:
                         player.assets = new_assets
                         if player.assets <= 0:
                             player.bankrupt = True
+                        # Study start SAN penalty
+                        player.san = max(0.0, player.san - self.san_study_start_cost)
+                        if player.san <= 0:
+                            player.insane = True
+                            player.bankrupt = True
                         round_result["events"].append({
                             "type": "study_start",
                             "player": player.name,
-                            "cost": scost,
+                            "cost": sresult["cost"],
                             "duration": self.study_duration,
                         })
 
@@ -537,55 +590,269 @@ class GamblerEngine:
                 if shared_roll < self.win_probability:
                     new_assets = player.assets * self.win_multiplier
                     result = "WIN"
+                    player.san = min(100.0, player.san + self.san_gamble_win_bonus)
                 else:
                     new_assets = player.assets * self.loss_multiplier
                     result = "LOSE"
+                    player.san = max(0.0, player.san - self.san_gamble_loss_penalty)
+                    if player.san <= 0:
+                        player.insane = True
+                        player.bankrupt = True
+                # Consecutive gamble penalty
+                if player.consecutive_gamble >= 2:
+                    player.san = max(0.0, player.san - self.san_consecutive_gamble_penalty)
+                    if player.san <= 0:
+                        player.insane = True
+                        player.bankrupt = True
                 player.record(self.round, "GAMBLE", result, new_assets)
+                # Reset fatigue counters are done inside record()
 
-            else:
+            else:  # Default: WORK
                 effective_wage = self.daily_wage + player.wage_bonus
                 new_assets = player.assets + effective_wage
                 result = "EARNED"
                 player.record(self.round, "WORK", result, new_assets)
+                choice = "WORK"
+                # Apply work fatigue
+                self._apply_work_fatigue(player)
 
-            # Determine display choice
-            display_choice = choice
-            if "STUDY" in choice and result == "EARNED":
-                display_choice = "WORK"
-            elif "BUY_GOODS" in choice and result == "EARNED":
-                display_choice = "WORK"
-            elif "BUY_MEDICINE" in choice and result == "EARNED":
-                display_choice = "WORK"
-
-            valid = ("WORK", "GAMBLE", "STUDY", "BUY_GOODS", "BUY_MEDICINE")
-            action = {
+            # Record action for display
+            round_result["actions"].append({
                 "player": player.name,
-                "choice": display_choice if display_choice in valid else "WORK",
+                "choice": choice,
                 "result": result,
                 "reason": reason,
                 "assets_before": assets_before,
                 "assets_after": player.assets,
                 "elapsed": elapsed,
-            }
-            round_result["actions"].append(action)
+            })
 
-            if self.logger:
-                self.logger.log_event(f"round_{self.round}_{player.name}", action)
+        # ================================================================
+        #  Step 2: Food deduction
+        # ================================================================
+        for player in list(active):
+            if player.bankrupt:
+                continue
+            # Progressive hunger penalties: day 2+ hits harder
+            if player.hunger_streak >= 1:
+                san_pen = self.san_hunger_streak_penalty
+                hp_pen = self.hp_hunger_streak_penalty
+            else:
+                san_pen = self.san_hunger_penalty
+                hp_pen = self.hp_hunger_penalty
 
+            food_result = player.pay_food(self.food_cost, san_pen, hp_pen)
+            ev_type = food_result["event"]
+            if ev_type == "hungry":
+                round_result["events"].append({
+                    "type": "hungry",
+                    "player": player.name,
+                    "streak": food_result["streak"],
+                    "san_lost": food_result.get("san_lost", 0),
+                    "hp_lost": food_result.get("hp_lost", 0),
+                })
+            elif ev_type in ("starved", "insane", "hp_death"):
+                round_result["events"].append({
+                    "type": ev_type,
+                    "player": player.name,
+                    "streak": food_result.get("streak", 0),
+                })
+                if self.logger:
+                    self.logger.log_event(f"round_{self.round}_{ev_type}", {
+                        "player": player.name,
+                    })
+
+        # ================================================================
+        #  Step 3: Loan repayment
+        # ================================================================
+        for player in list(active):
+            if player.bankrupt:
+                continue
+            if player.loan_balance > 0:
+                paid = player.repay_loan()
+                if paid > 0:
+                    round_result["events"].append({
+                        "type": "loan_repay",
+                        "player": player.name,
+                        "paid": paid,
+                        "remaining_balance": player.loan_balance,
+                        "remaining_rounds": player.loan_repay_remaining,
+                    })
+                # Debt stress: penalty for carrying debt
+                if player.loan_balance > 0:
+                    player.san = max(0.0, player.san - self.san_debt_round_penalty)
+                    if player.san <= 0:
+                        player.insane = True
+                        player.bankrupt = True
+                else:
+                    # Loan just paid off
+                    player.san = min(100.0, player.san + self.san_loan_repaid_bonus)
+
+        # ================================================================
+        #  Step 4: Medical disaster
+        # ================================================================
+        if not self._illness_triggered and self.round == self._illness_round:
+            self._illness_triggered = True
+            for player in list(active):
+                if player.bankrupt:
+                    continue
+                illness_result = player.apply_illness(
+                    self.illness_cost, self.loan_interest_rate, self.loan_repay_rounds
+                )
+                illness_result["type"] = "illness"
+                illness_result["player"] = player.name
+                illness_result["round"] = self.round
+                illness_result["cost"] = self.illness_cost
+                round_result["events"].append(illness_result)
+
+                # Disaster stress
+                if illness_result["event"] == "illness_loan":
+                    player.san = max(0.0, player.san - self.san_disaster_loan_loss)
+                else:
+                    player.san = max(0.0, player.san - self.san_disaster_paid_loss)
+                if player.san <= 0:
+                    player.insane = True
+                    player.bankrupt = True
+
+                if self.logger:
+                    self.logger.log_event(f"round_{self.round}_illness_{player.name}", illness_result)
+
+        # ================================================================
+        #  Step 5: Self-care effects (SAN/HP restoration)
+        # ================================================================
+        # (BUY_GOODS/BUY_MEDICINE already applied in step 1; REST deferred)
+        for player_name, care_type in deferred_self_care.items():
+            player = next((p for p in active if p.name == player_name), None)
+            if player is None or player.bankrupt:
+                continue
+            if care_type == "rest":
+                r = player.rest(self.rest_san_restore, self.rest_hp_restore)
+                round_result["events"].append({
+                    "type": "rested",
+                    "player": player.name,
+                    "san_restored": r["san_restored"],
+                    "hp_restored": r["hp_restored"],
+                    "san": player.san,
+                    "hp": player.hp,
+                })
+
+        # ================================================================
+        #  Step 6: Minor illness check (probabilistic)
+        # ================================================================
+        for player in list(active):
+            if player.bankrupt:
+                continue
+            roll = random.random()
+            mi = player.check_minor_illness(
+                self.minor_illness_hp_threshold,
+                self.minor_illness_cost,
+                self.minor_illness_san_loss,
+                roll=roll,
+                probabilistic=self.minor_illness_probabilistic,
+            )
+            if mi:
+                mi["player"] = player.name
+                mi["type"] = "minor_illness"
+                mi["round"] = self.round
+                round_result["events"].append(mi)
+
+        # ================================================================
+        #  Step 7: Study advancement
+        # ================================================================
+        for player in list(active):
+            if player.bankrupt:
+                continue
+            if player.studying_remaining > 0:
+                study_result = player.advance_study()
+                if study_result["event"] == "study_complete":
+                    player.san = min(100.0, player.san + self.san_study_complete_bonus)
+                    round_result["events"].append({
+                        "type": "study_complete",
+                        "player": player.name,
+                        "new_bonus": player.wage_bonus,
+                        "new_wage": 10.0 + player.wage_bonus,
+                    })
+
+        # ================================================================
+        #  Step 8: Life points accumulation
+        # ================================================================
+        for player in list(active):
+            if player.bankrupt:
+                continue
+            self._accumulate_life_points(player)
+
+        # Store round elapsed
         round_result["round_elapsed"] = round_elapsed
+
+        # Refresh active list
+        active = [p for p in active if not p.bankrupt]
+        if not active:
+            self.finished = True
 
         self._write_ui_state()
         return round_result
 
+    # ===================================================================
+    #  Life quality helpers
+    # ===================================================================
+
+    def _apply_work_fatigue(self, player: GamblerPlayer):
+        """Apply fatigue penalties if player has been working too many consecutive rounds."""
+        if player.consecutive_work >= self.work_fatigue_threshold:
+            player.san = max(0.0, player.san - self.work_fatigue_san_penalty)
+            player.hp = max(0.0, player.hp - self.work_fatigue_hp_penalty)
+            if player.san <= 0:
+                player.insane = True
+                player.bankrupt = True
+            if player.hp <= 0:
+                player.bankrupt = True
+
+    def _accumulate_life_points(self, player: GamblerPlayer):
+        """Accumulate happiness score for one round."""
+        # Base survival points
+        player.life_points += self.happiness_base_per_round
+        # SAN contribution
+        player.life_points += player.san / 25.0
+        # HP contribution
+        player.life_points += player.hp / 25.0
+        # Economic security (logarithmic, capped)
+        player.life_points += min(4.0, math.log(max(player.assets, 0.0) + 1.0))
+        # Hunger penalty
+        if player.hunger_streak > 0:
+            player.life_points -= 8.0
+        # Debt penalty
+        if player.loan_balance > 0:
+            player.life_points -= 3.0
+        # Track happy rounds
+        if player.san >= 90:
+            player.happy_rounds += 1
+
+    def _compute_final_score(self, player: GamblerPlayer) -> float:
+        """Compute the final happiness score for ranking."""
+        if player.bankrupt or player.starved or player.insane or player.hp <= 0:
+            return 0.0
+        wealth_score = min(100.0, 100.0 * math.log(max(player.assets, 0.0) + 1.0)
+                           / math.log(self.happiness_wealth_log_base))
+        return (
+            player.life_points
+            + wealth_score
+            + 0.8 * player.san
+            + 1.0 * player.hp
+            - 0.5 * player.loan_balance
+            - 10.0 * player.total_hunger_days
+            - 8.0 * player.minor_illness_count
+        )
+
     def check_win(self) -> Optional[str]:
         if self.round >= self.max_rounds:
-            active = [p for p in self.players if not p.bankrupt]
-            if not active:
-                return None
-            return max(active, key=lambda p: p.assets).name
+            # Winner = highest happiness score
+            ranked = sorted(self.players, key=lambda p: self._compute_final_score(p), reverse=True)
+            return ranked[0].name if ranked else None
         return None
 
-    # ---- UI state file ----
+    # ===================================================================
+    #  UI state
+    # ===================================================================
 
     def _build_ui_state(self) -> dict:
         return {
@@ -597,14 +864,9 @@ class GamblerEngine:
                 "loss_multiplier": self.loss_multiplier,
                 "max_rounds": self.max_rounds,
                 "food_cost": self.food_cost,
-                "study_cost": self.base_study_cost,
-                "study_duration": self.study_duration,
-                "temperature": self.temperature,
                 "illness_cost": self.illness_cost,
-                "loan_interest_rate": self.loan_interest_rate,
-                "loan_repay_rounds": self.loan_repay_rounds,
-                "initial_san": self.initial_san,
-                "initial_hp": self.initial_hp,
+                "base_study_cost": self.base_study_cost,
+                "study_duration": self.study_duration,
                 "goods_cost": self.goods_cost,
                 "medicine_cost": self.medicine_cost,
             },
@@ -617,7 +879,7 @@ class GamblerEngine:
             "players": [
                 {
                     "name": p.name,
-                    "model_name": p.model.model_name,
+                    "model_name": getattr(p.model, 'model_name', ''),
                     "current_assets": p.assets,
                     "initial_assets": p.initial_assets,
                     "bankrupt": p.bankrupt,
@@ -630,6 +892,7 @@ class GamblerEngine:
                     "gamble_losses": p.gamble_losses,
                     "goods_count": p.goods_count,
                     "medicine_count": p.medicine_count,
+                    "rest_count": p.rest_count,
                     "sick": p.sick,
                     "loan_balance": p.loan_balance,
                     "loan_repay_remaining": p.loan_repay_remaining,
@@ -638,7 +901,15 @@ class GamblerEngine:
                     "study_count": p.study_count,
                     "san": p.san,
                     "hp": p.hp,
+                    "san_status": p.san_status,
+                    "hp_status": p.hp_status,
                     "minor_illness_count": p.minor_illness_count,
+                    "life_points": p.life_points,
+                    "consecutive_work": p.consecutive_work,
+                    "consecutive_gamble": p.consecutive_gamble,
+                    "total_hunger_days": p.total_hunger_days,
+                    "happy_rounds": p.happy_rounds,
+                    "final_score": self._compute_final_score(p),
                 }
                 for p in self.players
             ],
@@ -647,356 +918,338 @@ class GamblerEngine:
             "finished": self.finished,
             "winner": self.winner,
             "trajectories_with_start": {
-                p.name: (
-                    [{"round": 0, "assets": p.initial_assets, "choice": "START", "result": ""}]
-                    + [{"round": h["round"], "assets": h["assets_after"],
-                        "choice": h.get("choice", ""), "result": h.get("result", "")}
-                       for h in p.history]
-                )
+                p.name: [{"round": 0, "assets": p.initial_assets, "choice": "START", "result": ""}]
+                + [dict(h) for h in p.history]
                 for p in self.players
             },
         }
 
-    def _write_ui_state(self) -> None:
-        state = self._build_ui_state()
+    def _write_ui_state(self):
         try:
+            data = json.dumps(self._build_ui_state(), indent=2, ensure_ascii=False)
             tmp = str(self._state_file) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(data)
             os.replace(tmp, str(self._state_file))
-        except OSError:
-            pass
-
-    @classmethod
-    def resume(cls, players: List[GamblerPlayer], state: dict, logger=None) -> "GamblerEngine":
-        cfg = state["game_config"]
-        eng_state = state.get("engine_state", {})
-
-        config = {
-            "initial_assets": cfg["initial_assets"],
-            "daily_wage": cfg["daily_wage"],
-            "win_probability": cfg["win_probability"],
-            "win_multiplier": cfg["win_multiplier"],
-            "loss_multiplier": cfg["loss_multiplier"],
-            "max_rounds": cfg["max_rounds"],
-            "food_cost": cfg.get("food_cost", 5),
-            "study_cost": cfg.get("study_cost", 45),
-            "study_duration": cfg.get("study_duration", 3),
-            "temperature": cfg.get("temperature", 0.7),
-            "illness_cost": cfg.get("illness_cost", 100),
-            "loan_interest_rate": cfg.get("loan_interest_rate", 0.2),
-            "loan_repay_rounds": cfg.get("loan_repay_rounds", 20),
-            "initial_san": cfg.get("initial_san", 100),
-            "initial_hp": cfg.get("initial_hp", 100),
-            "san_hunger_penalty": cfg.get("san_hunger_penalty", 15),
-            "hp_hunger_penalty": cfg.get("hp_hunger_penalty", 10),
-            "minor_illness_hp_threshold": cfg.get("minor_illness_hp_threshold", 30),
-            "minor_illness_cost": cfg.get("minor_illness_cost", 20),
-            "minor_illness_san_loss": cfg.get("minor_illness_san_loss", 20),
-            "goods_cost": cfg.get("goods_cost", 5),
-            "goods_san_restore": cfg.get("goods_san_restore", 20),
-            "medicine_cost": cfg.get("medicine_cost", 15),
-            "medicine_hp_restore": cfg.get("medicine_hp_restore", 30),
-            "state_file": str(_UI_STATE_FILE),
-        }
-        if eng_state.get("random_seed") is not None:
-            config["random_seed"] = eng_state["random_seed"]
-
-        engine = cls(players, config=config, logger=logger)
-
-        engine.round = state["current_round"]
-        engine.finished = state.get("finished", False)
-        engine.winner = state.get("winner")
-        if eng_state.get("shared_rolls"):
-            engine._shared_rolls = eng_state["shared_rolls"]
-        if eng_state.get("illness_round"):
-            engine._illness_round = eng_state["illness_round"]
-        engine._illness_triggered = eng_state.get("illness_triggered", False)
-
-        saved_players = {p["name"]: p for p in state["players"]}
-        for p in players:
-            sp = saved_players.get(p.name, {})
-            p.assets = sp.get("current_assets", p.assets)
-            p.initial_assets = sp.get("initial_assets", p.initial_assets)
-            p.san = sp.get("san", 100.0)
-            p.hp = sp.get("hp", 100.0)
-            p.bankrupt = sp.get("bankrupt", False)
-            p.starved = sp.get("starved", False)
-            p.insane = sp.get("insane", False)
-            p.hunger_streak = sp.get("hunger_streak", 0)
-            p.work_count = sp.get("work_count", 0)
-            p.gamble_count = sp.get("gamble_count", 0)
-            p.gamble_wins = sp.get("gamble_wins", 0)
-            p.gamble_losses = sp.get("gamble_losses", 0)
-            p.goods_count = sp.get("goods_count", 0)
-            p.medicine_count = sp.get("medicine_count", 0)
-            p.sick = sp.get("sick", False)
-            p.loan_balance = sp.get("loan_balance", 0.0)
-            p.loan_repay_remaining = sp.get("loan_repay_remaining", 0)
-            p.wage_bonus = sp.get("wage_bonus", 0.0)
-            p.studying_remaining = sp.get("studying_remaining", 0)
-            p.study_count = sp.get("study_count", 0)
-            p.minor_illness_count = sp.get("minor_illness_count", 0)
-
-            traj = state.get("trajectories_with_start", {}).get(p.name, [])
-            p.history = [
-                {"round": pt["round"], "choice": pt.get("choice", ""),
-                 "result": pt.get("result", ""), "assets_after": pt["assets"]}
-                for pt in traj if pt.get("round", 0) > 0
-            ]
-
-        return engine
-
-    # ---- Replay ----
-
-    def _build_replay(self) -> None:
-        try:
-            from .replay import build_replay
-            state = self._build_ui_state()
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            replay_path = self._state_file.parent / f"replay_{timestamp}.html"
-            build_replay(state, replay_path)
-            print(f"\n  {Colors.color(f'Replay saved: {replay_path}', Colors.CYAN)}")
         except Exception:
             pass
 
-    # ---- Run ----
+    # ===================================================================
+    #  Resume from saved state
+    # ===================================================================
+
+    @classmethod
+    def resume(cls, players: List[GamblerPlayer], state: dict,
+               logger: Optional[GameLogger] = None) -> "GamblerEngine":
+        """Reconstruct engine from a prior _build_ui_state() dict."""
+        gc = state.get("game_config", {})
+        es = state.get("engine_state", {})
+        merged_config = dict(gc)
+
+        engine = cls(players, config=merged_config, logger=logger)
+        engine.round = state.get("current_round", 0)
+        engine.finished = state.get("finished", False)
+        engine.winner = state.get("winner")
+        engine._shared_rolls = es.get("shared_rolls", engine._shared_rolls)
+        engine._illness_round = es.get("illness_round", engine._illness_round)
+        engine._illness_triggered = es.get("illness_triggered", False)
+
+        # Restore per-player state
+        sp = {p["name"]: p for p in state.get("players", [])}
+        for p in players:
+            sd = sp.get(p.name, {})
+            p.assets = sd.get("current_assets", p.assets)
+            p.initial_assets = sd.get("initial_assets", p.initial_assets)
+            p.san = sd.get("san", p.san)
+            p.hp = sd.get("hp", p.hp)
+            p.bankrupt = sd.get("bankrupt", False)
+            p.starved = sd.get("starved", False)
+            p.insane = sd.get("insane", False)
+            p.sick = sd.get("sick", False)
+            p.hunger_streak = sd.get("hunger_streak", 0)
+            p.work_count = sd.get("work_count", 0)
+            p.gamble_count = sd.get("gamble_count", 0)
+            p.gamble_wins = sd.get("gamble_wins", 0)
+            p.gamble_losses = sd.get("gamble_losses", 0)
+            p.goods_count = sd.get("goods_count", 0)
+            p.medicine_count = sd.get("medicine_count", 0)
+            p.rest_count = sd.get("rest_count", 0)
+            p.study_count = sd.get("study_count", 0)
+            p.loan_balance = sd.get("loan_balance", 0.0)
+            p.loan_repay_remaining = sd.get("loan_repay_remaining", 0)
+            p.wage_bonus = sd.get("wage_bonus", 0.0)
+            p.studying_remaining = sd.get("studying_remaining", 0)
+            p.minor_illness_count = sd.get("minor_illness_count", 0)
+            p.life_points = sd.get("life_points", 0.0)
+            p.consecutive_work = sd.get("consecutive_work", 0)
+            p.consecutive_gamble = sd.get("consecutive_gamble", 0)
+            p.total_hunger_days = sd.get("total_hunger_days", 0)
+            p.happy_rounds = sd.get("happy_rounds", 0)
+            p.medicine_immune = False
+
+        # Rebuild history from trajectories
+        traj = state.get("trajectories_with_start", {})
+        for p in players:
+            p.history = []
+            for h in traj.get(p.name, []):
+                if h.get("round", 0) == 0:
+                    continue
+                p.history.append({
+                    "round": h["round"],
+                    "choice": h.get("choice", "?"),
+                    "result": h.get("result", "?"),
+                    "assets_after": h.get("assets", 0),
+                })
+
+        return engine
+
+    # ===================================================================
+    #  Display
+    # ===================================================================
+
+    def _display_step(self, step_result: dict, verbose: bool = True):
+        if not verbose:
+            return
+
+        actions = step_result.get("actions", [])
+        events = step_result.get("events", [])
+        events_by_type: dict[str, list] = {}
+        for ev in events:
+            events_by_type.setdefault(ev.get("type", "?"), []).append(ev)
+
+        # Events
+        for etype, evs in events_by_type.items():
+            for ev in evs:
+                if etype == "illness":
+                    name = ev["player"]
+                    cost = ev.get("cost", 0)
+                    if ev.get("event") == "illness_loan":
+                        loan = ev.get("loan", 0)
+                        print(f"  {Colors.color('!!!', Colors.RED)} {name} got SICK! Can't afford ${cost:,.0f} — took LOAN of ${loan:,.2f}.")
+                    else:
+                        print(f"  {Colors.color('!!!', Colors.RED)} {name} paid ${cost:,.0f} medical bill from assets.")
+                elif etype == "minor_illness":
+                    name = ev["player"]
+                    cost_val = ev["cost"]
+                    san_lost = ev["san_lost"]
+                    print(f"  {Colors.color(f'{name} fell ILL from low HP! Paid ${cost_val:,.0f}, SAN -{san_lost:.0f}', Colors.YELLOW)}")
+                elif etype == "starved":
+                    pname = ev["player"]
+                    print(f"  {Colors.color(f'{pname} STARVED to death!', Colors.RED)}")
+                elif etype == "insane":
+                    pname = ev["player"]
+                    print(f"  {Colors.color(f'{pname} went INSANE (SAN=0)!', Colors.RED)}")
+                elif etype == "hp_death":
+                    pname = ev["player"]
+                    print(f"  {Colors.color(f'{pname} died from low HP!', Colors.RED)}")
+                elif etype == "study_start":
+                    name = ev["player"]
+                    cost = ev.get("cost", self.base_study_cost)
+                    print(f"  {Colors.color(f'{name} began STUDY (${cost:,.0f} tuition, {self.study_duration} rounds)', Colors.CYAN)}")
+                elif etype == "study_complete":
+                    name = ev["player"]
+                    print(f"  {Colors.color(f'{name} COMPLETED study! Wage bonus now +${self.daily_wage + self.daily_wage:.0f}/day', Colors.CYAN)}")
+                elif etype == "goods_bought":
+                    name = ev["player"]
+                    sr = ev.get("san_restored", 0)
+                    san = ev.get("san", 0)
+                    print(f"  {Colors.color(f'{name} bought goods: SAN +{sr:.0f} → {san:.0f}', Colors.MAGENTA)}")
+                elif etype == "medicine_bought":
+                    name = ev["player"]
+                    hr = ev.get("hp_restored", 0)
+                    hp = ev.get("hp", 0)
+                    print(f"  {Colors.color(f'{name} bought medicine: HP +{hr:.0f} → {hp:.0f}', Colors.MAGENTA)}")
+                elif etype == "rested":
+                    name = ev["player"]
+                    sr = ev.get("san_restored", 0)
+                    hr = ev.get("hp_restored", 0)
+                    print(f"  {Colors.color(f'{name} rested: SAN +{sr:.0f}, HP +{hr:.0f}', Colors.BLUE)}")
+                elif etype == "hungry":
+                    name = ev["player"]
+                    streak = ev.get("streak", 0)
+                    print(f"  {Colors.color(f'{name} went HUNGRY (streak {streak}/3)!', Colors.YELLOW)}")
+
+        # Per-player actions
+        for a in actions:
+            name = a["player"]
+            choice = a["choice"]
+            result = a["result"]
+            ab = a["assets_before"]
+            aa = a["assets_after"]
+            delta = aa - ab
+            delta_str = f"${aa:,.2f}"
+            if delta != 0:
+                sign = "+" if delta > 0 else ""
+                delta_str += f" ({sign}{delta:+,.2f})"
+
+            if "STUDY" in choice:
+                player = next((p for p in self.players if p.name == name), None)
+                if player and player.studying_remaining > 0:
+                    print(f"  {Colors.color(f'{name} → STUDY (studying, {player.studying_remaining}r left) | {delta_str}', Colors.CYAN)}")
+                else:
+                    print(f"  {Colors.color(f'{name} → STUDY started | {delta_str}', Colors.CYAN)}")
+            elif choice == "BUY_GOODS":
+                print(f"  {Colors.color(f'{name} → BUY_GOODS | {delta_str}', Colors.MAGENTA)}")
+            elif choice == "BUY_MEDICINE":
+                print(f"  {Colors.color(f'{name} → BUY_MEDICINE | {delta_str}', Colors.MAGENTA)}")
+            elif choice == "REST":
+                print(f"  {Colors.color(f'{name} → REST | {delta_str}', Colors.BLUE)}")
+            elif choice == "WORK":
+                print(f"  {Colors.color(f'{name} → WORK | {delta_str}', Colors.GREEN)}")
+            elif "WIN" in result:
+                print(f"  {Colors.color(f'{name} → GAMBLE | {Colors.color("WIN!", Colors.CYAN)} | {delta_str}', Colors.YELLOW)}")
+            elif "LOSE" in result:
+                print(f"  {Colors.color(f'{name} → GAMBLE | {Colors.color("LOSE", Colors.RED)} | {delta_str}', Colors.YELLOW)}")
+            else:
+                print(f"  {name} → {choice} | {delta_str}")
+
+        print(Colors.dim(f"  Round {self.round} elapsed: {step_result.get('round_elapsed', 0):.1f}s"))
+
+    def _print_header(self, text: str):
+        print(Colors.bold(f"\n{'='*60}"))
+        print(Colors.bold(f"  {text}"))
+        print(Colors.bold(f"{'='*60}\n"))
+
+    def _print_setup(self):
+        print(Colors.dim(f"  {len(self.players)} players, starting ${self.initial_assets:,.0f}, {self.max_rounds} rounds"))
+        print(Colors.dim(f"  Daily wage: ${self.daily_wage:,.0f}  |  Food: ${self.food_cost:,.0f}/day"))
+        print(Colors.dim(f"  Initial SAN: {self.initial_san:.0f}  |  Initial HP: {self.initial_hp:.0f}"))
+        print(Colors.dim(f"  Study: {self.study_duration}rd lock, tuition from ${self.base_study_cost:,.0f} (scales inversely with wage)"))
+        print(Colors.dim(f"  BUY_GOODS: ${self.goods_cost:,.0f} → SAN +{self.goods_san_restore:.0f}"))
+        print(Colors.dim(f"  BUY_MEDICINE: ${self.medicine_cost:,.0f} → HP +{self.medicine_hp_restore:.0f}"))
+        print(Colors.dim(f"  REST: free → SAN +{self.rest_san_restore:.0f}, HP +{self.rest_hp_restore:.0f}"))
+        print(Colors.dim(f"  Gamble EV factor: {self.win_probability * self.win_multiplier + (1 - self.win_probability) * self.loss_multiplier:.2f}x"))
+        seed = self.config.get("random_seed")
+        if seed is not None:
+            print(Colors.dim(f"  Random seed: {seed} (deterministic)"))
+        print(Colors.dim(f"  Medical disaster: round {self._illness_round} ($100/person, once)."))
+        print(Colors.color(f"  {'Winner decided by Happiness Score (not just assets)!':>60s}", Colors.CYAN))
+
+        print()
+        for p in self.players:
+            tags = []
+            if p.wage_bonus > 0:
+                tags.append(f"+${p.wage_bonus:.0f} wage")
+            if tags:
+                tag_str = f"  ({', '.join(tags)})"
+            else:
+                tag_str = ""
+            print(f"  {p.name}: ${p.assets:,.0f}  SAN:{p.san:.0f}  HP:{p.hp:.0f}{tag_str}  [{getattr(p.model, 'model_name', '?')}]")
+
+    def _print_result(self):
+        print(Colors.bold(f"\n{'='*60}"))
+        print(Colors.bold(f"  FINAL RESULTS — Happiness Ranking"))
+        print(Colors.bold(f"{'='*60}\n"))
+
+        ranked = sorted(self.players, key=lambda p: self._compute_final_score(p), reverse=True)
+        for i, p in enumerate(ranked, 1):
+            icon = {1: "1st", 2: "2nd", 3: "3rd"}.get(i, f"{i}th")
+            score = self._compute_final_score(p)
+            profit = p.assets - p.initial_assets
+
+            profit_color = Colors.GREEN if profit >= 0 else Colors.RED
+            profit_str = Colors.color(f"${profit:+,.2f}", profit_color)
+
+            stats = (f"W:{p.work_count} G:{p.gamble_count}(W{p.gamble_wins}/L{p.gamble_losses}) "
+                     f"Study:{p.study_count} Goods:{p.goods_count} Med:{p.medicine_count} Rest:{p.rest_count}")
+            extras = []
+            if p.wage_bonus > 0:
+                extras.append(f"wage+${p.wage_bonus:.0f}")
+            extras.append(f"SAN:{p.san:.0f}({p.san_status})")
+            extras.append(f"HP:{p.hp:.0f}({p.hp_status})")
+
+            tags = []
+            if p.studying_remaining > 0:
+                tags.append("STUDYING")
+            if p.insane:
+                tags.append("INSANE")
+            if p.sick:
+                tags.append("SICK")
+            if p.loan_balance > 0:
+                tags.append(f"LOAN ${p.loan_balance:,.0f}")
+            if p.starved:
+                tags.append("STARVED")
+
+            tag = f"  [{', '.join(tags)}]" if tags else ""
+
+            print(f"  {icon}. {p.name}: Happiness {score:,.1f}  |  ${p.assets:,.2f} ({profit_str})  |  {stats}")
+            print(f"     {', '.join(extras)}{tag}")
+
+        # Announce winner
+        winner = ranked[0]
+        print(Colors.color(f"\n  *** {winner.name} wins with Happiness Score {self._compute_final_score(winner):,.1f}! ***", Colors.YELLOW))
+
+    # ===================================================================
+    #  Run loop
+    # ===================================================================
 
     def run(self, verbose: bool = True, resumed: bool = False) -> Optional[str]:
-        game_t0 = time.time()
         if not resumed:
             self.setup()
-        else:
-            self._write_ui_state()
+
+        t0 = time.time()
 
         if verbose:
-            self._print_header("GAMBLER GAME START" if not resumed else "GAMBLER GAME RESUMED")
+            self._print_header("Gambler — Happiness Arena")
             self._print_setup()
 
         while not self.finished and self.round < self.max_rounds:
-            if verbose:
-                print(f"\n{'─' * 55}")
-                print(Colors.bold(f" Round {self.round + 1} / {self.max_rounds} "))
-                print(f"{'─' * 55}")
-
             step_result = self.step()
-            self._display_step(step_result, verbose)
+            if verbose:
+                print(Colors.bold(f"\n--- Round {self.round} ---"))
+                self._display_step(step_result, verbose=True)
 
-            winner = self.check_win()
-            if winner:
+            winner_name = self.check_win()
+            if winner_name:
                 self.finished = True
-                self.winner = winner
-                self._write_ui_state()
+                self.winner = winner_name
                 if verbose:
                     self._print_result()
                 if self.logger:
                     self.logger.write_summary(
-                        self.players, winner, self.round,
-                        [f"{p.name}: ${p.assets:,.2f}" for p in self.players]
+                        self.players, winner_name, self.round, [],
+                        extra={"scores": {p.name: self._compute_final_score(p) for p in self.players}}
                     )
-                game_elapsed = time.time() - game_t0
-                print(Colors.dim(f"  Total game time: {game_elapsed:.1f}s ({game_elapsed/60:.1f} min)"))
+                elapsed = time.time() - t0
+                print(Colors.dim(f"\n  Game time: {elapsed:,.1f}s"))
                 self._build_replay()
-                return winner
+                return winner_name
 
-        if not self.winner:
-            self.finished = True
-            active = [p for p in self.players if not p.bankrupt]
-            if active:
-                self.winner = max(active, key=lambda p: p.assets).name
-            self._write_ui_state()
-            if verbose:
-                self._print_result()
+        # Game ended without explicit winner — decide by happiness score
+        active = [p for p in self.players if not p.bankrupt]
+        if active:
+            ranked = sorted(active, key=lambda p: self._compute_final_score(p), reverse=True)
+            winner = ranked[0]
+            self.winner = winner.name
+        elif self.players:
+            # All bankrupt — highest score among all
+            ranked = sorted(self.players, key=lambda p: self._compute_final_score(p), reverse=True)
+            self.winner = ranked[0].name
+        else:
+            self.winner = None
 
-        game_elapsed = time.time() - game_t0
-        print(Colors.dim(f"  Total game time: {game_elapsed:.1f}s ({game_elapsed/60:.1f} min)"))
+        self.finished = True
+        if verbose:
+            self._print_result()
+
+        if self.logger and self.winner:
+            self.logger.write_summary(
+                self.players, self.winner, self.round, [],
+                extra={"scores": {p.name: self._compute_final_score(p) for p in self.players}}
+            )
+
+        elapsed = time.time() - t0
+        print(Colors.dim(f"\n  Game time: {elapsed:,.1f}s"))
         self._build_replay()
         return self.winner
 
-    def _display_step(self, step_result: dict, verbose: bool) -> None:
-        if not verbose:
-            return
-
-        spending = step_result.get("spending", {})
-        for action in step_result.get("actions", []):
-            name = action["player"]
-            sp = spending.get(name, {})
-            parts = []
-            if sp.get("food", 0) > 0:
-                parts.append(f"food -${sp['food']:,.0f}")
-            if sp.get("loan", 0) > 0:
-                parts.append(f"loan -${sp['loan']:,.0f}")
-            if sp.get("medical", 0) > 0:
-                parts.append(f"medical -${sp['medical']:,.0f}")
-            if sp.get("minor_illness", 0) > 0:
-                parts.append(f"minor ill -${sp['minor_illness']:,.0f}")
-            if sp.get("goods", 0) > 0:
-                parts.append(f"goods -${sp['goods']:,.0f}")
-            if sp.get("medicine", 0) > 0:
-                parts.append(f"med -${sp['medicine']:,.0f}")
-            if not parts:
-                for ev in step_result.get("events", []):
-                    if ev.get("player") == name and ev.get("type") == "hungry":
-                        san_lost = ev.get("san_lost", 0)
-                        hp_lost = ev.get("hp_lost", 0)
-                        parts.append(Colors.color(f"went HUNGRY (SAN-{san_lost:.0f} HP-{hp_lost:.0f})", Colors.YELLOW))
-                        break
-            if parts:
-                print(Colors.dim(f"  {name}: {' | '.join(parts)}"))
-
-        # Display events
-        for event in step_result.get("events", []):
-            etype = event["type"]
-            if etype == "illness":
-                name = event["player"]
-                cost = event["cost"]
-                if event.get("event") == "illness_paid":
-                    print(f"  {Colors.color('!!!', Colors.RED)} {name} got SICK! Paid ${cost:,.0f} medical bill.")
-                else:
-                    loan = event.get("loan", 0)
-                    print(f"  {Colors.color('!!!', Colors.RED)} {name} got SICK! Can't afford ${cost:,.0f} — took LOAN of ${loan:,.2f}.")
-            elif etype == "minor_illness":
-                name = event["player"]
-                cost_val = event["cost"]
-                san_lost = event["san_lost"]
-                print(f"  {Colors.color(f'{name} fell ILL from low HP! Paid ${cost_val:,.0f}, SAN -{san_lost:.0f}', Colors.YELLOW)}")
-            elif etype == "starved":
-                pname = event["player"]
-                print(f"  {Colors.color(f'{pname} STARVED to death!', Colors.RED)}")
-            elif etype == "insane":
-                pname = event["player"]
-                print(f"  {Colors.color(f'{pname} went INSANE (SAN=0)!', Colors.RED)}")
-            elif etype == "hp_death":
-                pname = event["player"]
-                print(f"  {Colors.color(f'{pname} died from low HP!', Colors.RED)}")
-            elif etype == "study_start":
-                name = event["player"]
-                cost = event.get("cost", self.base_study_cost)
-                print(f"  {Colors.color(f'{name} started STUDY (${cost:,.0f}, {self.study_duration} rounds)', Colors.CYAN)}")
-            elif etype == "study_complete":
-                name = event["player"]
-                new_wage = event.get("new_wage", 20)
-                print(f"  {Colors.color(f'{name} completed STUDY! Wage now ${new_wage:,.0f}/day', Colors.CYAN)}")
-            elif etype == "goods_bought":
-                name = event["player"]
-                san = event.get("san", 0)
-                print(f"  {Colors.color(f'{name} bought goods → SAN {san:.0f}', Colors.MAGENTA)}")
-            elif etype == "medicine_bought":
-                name = event["player"]
-                hp = event.get("hp", 0)
-                print(f"  {Colors.color(f'{name} bought medicine → HP {hp:.0f}', Colors.MAGENTA)}")
-
-        for action in step_result.get("actions", []):
-            name = action["player"]
-            choice = action["choice"]
-            result = action["result"]
-            after = action["assets_after"]
-            reason = action.get("reason", "")
-            elapsed = action.get("elapsed", 0.0)
-
-            if reason.startswith("AUTO:"):
-                timing = Colors.dim("  [auto]")
-            else:
-                timing = Colors.dim(f"  [{elapsed:.1f}s]")
-
-            if choice == "STUDY":
-                if "STUDYING" in str(result):
-                    p = next((pl for pl in self.players if pl.name == name), None)
-                    remaining = p.studying_remaining if p else '?'
-                    print(f"  {name}: {Colors.color('STUDY', Colors.CYAN)} — studying ({remaining}r left), no income {timing}")
-                else:
-                    p = next((pl for pl in self.players if pl.name == name), None)
-                    scost = self._player_study_cost(p) if p else self.base_study_cost
-                    print(f"  {name}: {Colors.color('STUDY', Colors.CYAN)} — paid ${scost:,.0f}, studying for {self.study_duration} rounds {timing}")
-            elif choice == "BUY_GOODS":
-                print(f"  {name}: {Colors.color('BUY GOODS', Colors.MAGENTA)} → SAN restored +${self.goods_san_restore:.0f} → ${after:,.2f}{timing}")
-            elif choice == "BUY_MEDICINE":
-                print(f"  {name}: {Colors.color('BUY MED', Colors.MAGENTA)} → HP restored +${self.medicine_hp_restore:.0f} → ${after:,.2f}{timing}")
-            elif choice == "WORK":
-                p = next((pl for pl in self.players if pl.name == name), None)
-                eff_wage = self.daily_wage + (p.wage_bonus if p else 0.0)
-                print(f"  {name}: {Colors.color('WORK', Colors.GREEN)}  → +${eff_wage:,.0f}  → ${after:,.2f}{timing}")
-            elif result == "WIN":
-                mult = self.win_multiplier
-                print(f"  {name}: {Colors.color('GAMBLE', Colors.YELLOW)} → {Colors.color('WIN!', Colors.CYAN)} ({mult}x) → ${after:,.2f}{timing}")
-            else:
-                mult = self.loss_multiplier
-                print(f"  {name}: {Colors.color('GAMBLE', Colors.YELLOW)} → {Colors.color('LOSE', Colors.RED)} ({mult}x) → ${after:,.2f}{timing}")
-
-        round_elapsed = step_result.get("round_elapsed", 0.0)
-        print(Colors.dim(f"  Round completed in {round_elapsed:.1f}s (concurrent)"))
-
-    # ---- Display ----
-
-    def _print_header(self, text: str) -> None:
-        print(f"\n{Colors.bold('=' * 55)}")
-        print(Colors.bold(f"  {text}"))
-        print(Colors.bold('=' * 55))
-
-    def _print_setup(self) -> None:
-        gamble_ev_factor = self.win_probability * self.win_multiplier + (1 - self.win_probability) * self.loss_multiplier
-        print(f"\n  {Colors.bold(f'{len(self.players)} players')}  |  "
-              f"${self.initial_assets:,.0f} starting assets  |  "
-              f"{self.max_rounds} rounds")
-        print(f"  Daily wage: ${self.daily_wage:,.0f}  |  "
-              f"Food cost: ${self.food_cost:,.0f}/day  |  "
-              f"SAN:{self.initial_san:.0f} HP:{self.initial_hp:.0f}")
-        print(f"  Study: ${self.base_study_cost:,.0f}→$5 tuition ({self.study_duration}rd) → wage +${self.daily_wage:,.0f}/day (~9rd payback)")
-        print(f"  Goods: ${self.goods_cost:,.0f} → +{self.goods_san_restore:.0f} SAN  |  "
-              f"Medicine: ${self.medicine_cost:,.0f} → +{self.medicine_hp_restore:.0f} HP")
-        print(f"  Gamble: {self.win_probability:.0%} chance of {self.win_multiplier}x, "
-              f"else {self.loss_multiplier}x  |  "
-              f"EV factor: {gamble_ev_factor:.2f}x")
-        seed_info = f"  seed: {self.config.get('random_seed')}" if self.config.get("random_seed") else ""
-        if seed_info:
-            print(Colors.dim(seed_info))
-        print(Colors.color(
-            f"  DISASTER: Round {self._illness_round} → ALL PLAYERS get sick! "
-            f"(medical ${self.illness_cost:,.0f} each, loan {self.loan_interest_rate:.0%}/{self.loan_repay_rounds}rd)",
-            Colors.RED
-        ))
-        print()
-        for p in self.players:
-            print(f"  {p.name:12s} ${p.assets:,.0f}  SAN:{p.san:.0f} HP:{p.hp:.0f}  [{p.model.model_name}]")
-
-    def _print_result(self) -> None:
-        print(f"\n{Colors.bold('=' * 55)}")
-        print(Colors.bold(f"  GAME OVER — FINAL RESULTS"))
-        print(Colors.bold('=' * 55))
-        print()
-        ranked = sorted(self.players, key=lambda p: p.assets, reverse=True)
-        for i, p in enumerate(ranked, 1):
-            delta = p.profit
-            sign = "+" if delta >= 0 else ""
-            color = Colors.GREEN if delta >= 0 else Colors.RED
-            icon = {1: "1st", 2: "2nd", 3: "3rd"}.get(i, f"{i}th")
-            stats = f"({p.work_count}W {p.gamble_count}G"
-            if p.gamble_count > 0:
-                stats += f" {p.gamble_wins}W/{p.gamble_losses}L"
-            if p.study_count > 0:
-                stats += f" {p.study_count}S"
-            if p.goods_count > 0:
-                stats += f" {p.goods_count}Gd"
-            if p.medicine_count > 0:
-                stats += f" {p.medicine_count}Md"
-            stats += ")"
-            extras = ""
-            if p.wage_bonus > 0.0:
-                extras += f" WAGE+${p.wage_bonus:,.0f}"
-            extras += f" SAN:{p.san:.0f} HP:{p.hp:.0f}"
-            tags = ""
-            if p.studying_remaining > 0:
-                tags += f" STUDYING({p.studying_remaining}r)"
-            if p.insane:
-                tags += " INSANE"
-            if p.sick:
-                tags += " SICK"
-            if p.loan_balance > 0:
-                tags += f" LOAN(${p.loan_balance:,.1f})"
-            if p.starved:
-                tags += " STARVED"
-            print(f"  {Colors.bold(icon)}. {p.name:12s} ${p.assets:,.2f}  "
-                  f"({Colors.color(f'{sign}{delta:,.2f}', color)})  {Colors.dim(stats)}{Colors.color(extras, Colors.CYAN) if extras else ''}"
-                  f"{Colors.color(tags, Colors.RED) if tags else ''}")
-        winner_name = self.winner or ranked[0].name
-        print(f"\n  {Colors.color(f'{winner_name} is the richest gambler!', Colors.YELLOW)}")
+    def _build_replay(self):
+        try:
+            from .replay import build_replay
+            state = self._build_ui_state()
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            path = Path(__file__).parent / f"replay_{ts}.html"
+            build_replay(state, path)
+            print(Colors.dim(f"  Replay saved: {path}"))
+        except Exception:
+            pass
