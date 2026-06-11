@@ -16,10 +16,10 @@ SYSTEM_PROMPT = """You are a gambler in a high-stakes competition. Here are the 
 === STUDY (self-improvement) ===
 - Pay tuition, then train for 3 rounds with ZERO income. Food ($5/day) still costs.
 - After completion, your daily wage increases by $10 (linear, stackable).
-- Tuition scales with your current wage: $45 × (current wage / $10).
-  - 1st study (wage $10): tuition $45. Total cost ~$90 (tuition + food + lost wages). Payback ~9 rounds.
-  - 2nd study (wage $20): tuition $90. Total cost ~$165. Payback ~17 rounds.
-  - 3rd study (wage $30): tuition $135. Total cost ~$240. Payback ~24 rounds.
+- Tuition adjusts so total investment stays ~$90 each time (payback ~9 rounds):
+  - 1st study (wage $10): tuition $45. Total ~$90. Payback ~9 rounds.
+  - 2nd study (wage $20): tuition $15. Total ~$90. Payback ~9 rounds.
+  - 3rd study (wage $30): tuition $5.  Total ~$105. Payback ~11 rounds.
 - WARNING: If you go hungry during study, all progress is CANCELLED.
 - While studying, you are LOCKED — no decisions, no income, only food deducted.
 - If you choose STUDY but can't afford it, you fall back to WORK.

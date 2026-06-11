@@ -82,10 +82,11 @@ class GamblerEngine:
         self._snapshots: List[dict] = []
 
     def _player_study_cost(self, player: GamblerPlayer) -> float:
-        """Tuition scales with current effective wage: base × (effective_wage / base_wage).
-        Keeps payback roughly constant at ~9 rounds for first study."""
+        """Tuition adjusts so total cost stays ~$90 (payback ~9 rounds).
+        Higher wage → more lost wages → lower tuition to compensate."""
         effective_wage = self.daily_wage + player.wage_bonus
-        return self.base_study_cost * effective_wage / self.daily_wage
+        tuition = 75.0 - 3.0 * effective_wage  # target: total cost ~$90
+        return max(5.0, tuition)  # minimum $5 tuition
 
     # ---- Query helper ----
 
@@ -729,7 +730,7 @@ class GamblerEngine:
               f"{self.max_rounds} rounds")
         print(f"  Daily wage: ${self.daily_wage:,.0f}  |  "
               f"Food cost: ${self.food_cost:,.0f}/day  |  "
-              f"Study: ${self.base_study_cost:,.0f} × wage lvl for {self.study_duration} rounds → wage +${self.daily_wage:,.0f}/day")
+              f"Study: ${self.base_study_cost:,.0f}→$5 tuition ({self.study_duration}rd) → wage +${self.daily_wage:,.0f}/day (~9rd payback)")
         print(f"  Gamble: {self.win_probability:.0%} chance of {self.win_multiplier}x, "
               f"else {self.loss_multiplier}x  |  "
               f"EV factor: {gamble_ev_factor:.2f}x")
