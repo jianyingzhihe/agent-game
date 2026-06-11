@@ -74,7 +74,7 @@ class GamblerEngine:
         self._illness_triggered = False
         self._illness_round = random.randint(10, max(self.max_rounds - 5, 11))
 
-        # Study / self-improvement — fixed cost, linear wage gain
+        # Study / self-improvement — tuition scales with current wage
         self.base_study_cost = float(self.config.get("base_study_cost", 45))
         self.study_duration = int(self.config.get("study_duration", 3))
 
@@ -82,8 +82,10 @@ class GamblerEngine:
         self._snapshots: List[dict] = []
 
     def _player_study_cost(self, player: GamblerPlayer) -> float:
-        """Study cost is fixed at base_study_cost."""
-        return self.base_study_cost
+        """Tuition scales with current effective wage: base × (effective_wage / base_wage).
+        Keeps payback roughly constant at ~9 rounds for first study."""
+        effective_wage = self.daily_wage + player.wage_bonus
+        return self.base_study_cost * effective_wage / self.daily_wage
 
     # ---- Query helper ----
 
@@ -727,7 +729,7 @@ class GamblerEngine:
               f"{self.max_rounds} rounds")
         print(f"  Daily wage: ${self.daily_wage:,.0f}  |  "
               f"Food cost: ${self.food_cost:,.0f}/day  |  "
-              f"Study: ${self.base_study_cost:,.0f} for {self.study_duration} rounds → wage +${self.daily_wage:,.0f}/day")
+              f"Study: ${self.base_study_cost:,.0f} × wage lvl for {self.study_duration} rounds → wage +${self.daily_wage:,.0f}/day")
         print(f"  Gamble: {self.win_probability:.0%} chance of {self.win_multiplier}x, "
               f"else {self.loss_multiplier}x  |  "
               f"EV factor: {gamble_ev_factor:.2f}x")
