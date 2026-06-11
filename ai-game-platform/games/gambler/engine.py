@@ -88,6 +88,52 @@ class GamblerEngine:
         tuition = 75.0 - 3.0 * effective_wage  # target: total cost ~$90
         return max(5.0, tuition)  # minimum $5 tuition
 
+    def _auto_choice(self, player: GamblerPlayer) -> dict | None:
+        """Return a forced choice dict if the player has no meaningful decision, else None.
+
+        Optimisation: skip the LLM API call when the outcome is deterministic.
+        """
+        effective_wage = self.daily_wage + player.wage_bonus
+        food_next = self.food_cost  # food cost next round
+        # Approximate loan payment for next round (if any)
+        loan_next = (player.loan_balance / max(player.loan_repay_remaining, 1)
+                     if player.loan_balance > 0 else 0.0)
+        survival_cost = food_next + loan_next
+
+        # ---- Case 1: About to starve, only WORK guarantees survival ----
+        if player.hunger_streak >= 2:
+            after_work = player.assets + effective_wage
+            after_gamble_lose = player.assets * self.loss_multiplier
+            can_survive_work = after_work >= survival_cost
+            can_survive_gamble_lose = after_gamble_lose >= survival_cost
+
+            if can_survive_work and not can_survive_gamble_lose:
+                return {
+                    "choice": "WORK",
+                    "reason": "AUTO: hunger streak 2 — GAMBLE loss = starvation, WORK guarantees survival."
+                }
+            # Truly doomed: even WORK can't save them
+            if not can_survive_work and not can_survive_gamble_lose:
+                return {
+                    "choice": "WORK",
+                    "reason": "AUTO: hunger streak 2 — cannot afford food even with WORK. No choice matters."
+                }
+
+        # ---- Case 2: STUDY is the only unaffordable option, and GAMBLE is suicide ----
+        study_cost = self._player_study_cost(player)
+        food_reserve = self.study_duration * self.food_cost
+        can_study = player.assets >= study_cost + food_reserve and player.studying_remaining <= 0
+        can_gamble_safely = player.assets * self.loss_multiplier >= survival_cost
+
+        if not can_study and not can_gamble_safely and player.hunger_streak >= 1:
+            return {
+                "choice": "WORK",
+                "reason": "AUTO: STUDY unaffordable, GAMBLE loss = hunger death. Only WORK is safe."
+            }
+
+        # ---- Not forced — model decides ----
+        return None
+
     # ---- Query helper ----
 
     def _query(self, player: GamblerPlayer, prompt: str) -> tuple[dict, float]:
@@ -269,11 +315,21 @@ class GamblerEngine:
         studying_players = [p for p in active if p.studying_remaining > 0]
         deciding_players = [p for p in active if p.studying_remaining <= 0]
 
+        # Fast path: auto-decide for players whose choice is forced
+        auto_results: dict[str, tuple[dict, float]] = {}
+        need_api = []
+        for player in deciding_players:
+            forced = self._auto_choice(player)
+            if forced:
+                auto_results[player.name] = (forced, 0.0)
+            else:
+                need_api.append(player)
+
         # Shared roll for this round — all gamblers face the same luck
         shared_roll = self._shared_rolls[self.round - 1]
 
-        # Build all prompts first (snapshot current state for deciding players only)
-        order = list(deciding_players)
+        # Build prompts for players who actually need an API call
+        order = list(need_api)
         random.shuffle(order)
         tasks = []
         for player in order:
@@ -307,18 +363,19 @@ class GamblerEngine:
 
         # Query all players concurrently — wait for the slowest, not the sum
         round_t0 = time.time()
-        results: dict[str, tuple[dict, float]] = {}
-        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-            future_to_player = {
-                executor.submit(self._query, player, prompt): player.name
-                for player, prompt in tasks
-            }
-            for future in as_completed(future_to_player):
-                name = future_to_player[future]
-                try:
-                    results[name] = future.result()  # (parsed, elapsed)
-                except Exception as e:
-                    results[name] = ({"choice": "WORK", "reason": f"ERROR: {e}"}, 0.0)
+        results: dict[str, tuple[dict, float]] = dict(auto_results)  # start with forced choices
+        if tasks:
+            with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+                future_to_player = {
+                    executor.submit(self._query, player, prompt): player.name
+                    for player, prompt in tasks
+                }
+                for future in as_completed(future_to_player):
+                    name = future_to_player[future]
+                    try:
+                        results[name] = future.result()  # (parsed, elapsed)
+                    except Exception as e:
+                        results[name] = ({"choice": "WORK", "reason": f"ERROR: {e}"}, 0.0)
         round_elapsed = time.time() - round_t0
 
         # Auto-record actions for studying players (no API call, no income)
@@ -341,7 +398,8 @@ class GamblerEngine:
             round_result["actions"].append(action)
 
         # Resolve outcomes for deciding players (same shared roll for all gamblers)
-        for player in order:
+        all_deciding = list(deciding_players)
+        for player in all_deciding:
             parsed, elapsed = results.get(player.name, ({"choice": "WORK", "reason": ""}, 0.0))
             choice = parsed.get("choice", "WORK").strip().upper()
             reason = parsed.get("reason", "")
@@ -690,8 +748,13 @@ class GamblerEngine:
             choice = action["choice"]
             result = action["result"]
             after = action["assets_after"]
+            reason = action.get("reason", "")
             elapsed = action.get("elapsed", 0.0)
-            timing = Colors.dim(f"  [{elapsed:.1f}s]")
+
+            if reason.startswith("AUTO:"):
+                timing = Colors.dim("  [auto]")
+            else:
+                timing = Colors.dim(f"  [{elapsed:.1f}s]")
 
             if choice == "STUDY":
                 if "STUDYING" in str(result):
