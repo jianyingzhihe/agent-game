@@ -1,0 +1,229 @@
+{
+  "game_config": {
+    "initial_assets": 100.0,
+    "daily_wage": 10.0,
+    "win_probability": 0.4,
+    "win_multiplier": 3.0,
+    "loss_multiplier": 0.3,
+    "max_rounds": 5
+  },
+  "players": [
+    {
+      "name": "Alice",
+      "model_name": "deepseek-v4-pro",
+      "current_assets": 270.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 0,
+      "gamble_count": 3,
+      "gamble_wins": 2,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Bob",
+      "model_name": "deepseek-v4-pro",
+      "current_assets": 120.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 1,
+      "gamble_count": 2,
+      "gamble_wins": 1,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Charlie",
+      "model_name": "qwen-max",
+      "current_assets": 270.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 0,
+      "gamble_count": 3,
+      "gamble_wins": 2,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Diana",
+      "model_name": "kimi-k2.6",
+      "current_assets": 120.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 1,
+      "gamble_count": 2,
+      "gamble_wins": 1,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Eve",
+      "model_name": "glm-5.1",
+      "current_assets": 270.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 0,
+      "gamble_count": 3,
+      "gamble_wins": 2,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Grace",
+      "model_name": "doubao-seed-2-0-pro-260215",
+      "current_assets": 270.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 0,
+      "gamble_count": 3,
+      "gamble_wins": 2,
+      "gamble_losses": 1
+    },
+    {
+      "name": "Henry",
+      "model_name": "doubao-seed-2-0-pro-260215",
+      "current_assets": 270.0,
+      "initial_assets": 100.0,
+      "bankrupt": false,
+      "work_count": 0,
+      "gamble_count": 3,
+      "gamble_wins": 2,
+      "gamble_losses": 1
+    }
+  ],
+  "player_names": [
+    "Alice",
+    "Bob",
+    "Charlie",
+    "Diana",
+    "Eve",
+    "Grace",
+    "Henry"
+  ],
+  "current_round": 3,
+  "finished": false,
+  "winner": null,
+  "trajectories_with_start": {
+    "Alice": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 90.0
+      },
+      {
+        "round": 3,
+        "assets": 270.0
+      }
+    ],
+    "Bob": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 40.0
+      },
+      {
+        "round": 3,
+        "assets": 120.0
+      }
+    ],
+    "Charlie": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 90.0
+      },
+      {
+        "round": 3,
+        "assets": 270.0
+      }
+    ],
+    "Diana": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 40.0
+      },
+      {
+        "round": 3,
+        "assets": 120.0
+      }
+    ],
+    "Eve": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 90.0
+      },
+      {
+        "round": 3,
+        "assets": 270.0
+      }
+    ],
+    "Grace": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 90.0
+      },
+      {
+        "round": 3,
+        "assets": 270.0
+      }
+    ],
+    "Henry": [
+      {
+        "round": 0,
+        "assets": 100.0
+      },
+      {
+        "round": 1,
+        "assets": 30.0
+      },
+      {
+        "round": 2,
+        "assets": 90.0
+      },
+      {
+        "round": 3,
+        "assets": 270.0
+      }
+    ]
+  }
+}

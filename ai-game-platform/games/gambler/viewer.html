@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gambler Arena — 实时赌局</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --card: #1a1a2e;
+    --border: #2a2a4a;
+    --text: #c8c8d8;
+    --accent: #e2b04a;
+    --green: #4caf84;
+    --red: #e0556a;
+    --blue: #5b9bd5;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  .header {
+    background: var(--card);
+    border-bottom: 2px solid var(--accent);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .header h1 { color: var(--accent); font-size: 1.4rem; }
+  .status-badge {
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+  }
+  .status-live { background: #2d4a3e; color: var(--green); animation: pulse 2s infinite; }
+  .status-over { background: #3a2a2a; color: var(--accent); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+  .main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .chart-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .chart-wrap canvas { max-height: 450px; }
+  .info-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .info-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+  }
+  .info-card .label { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; margin-bottom: 4px; }
+  .info-card .value { font-size: 1.5rem; font-weight: 700; }
+  .info-card .value.gold { color: var(--accent); }
+  .standings {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .standings h2 {
+    padding: 14px 20px;
+    font-size: 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 16px; text-align: left; white-space: nowrap; }
+  th { font-size: 0.72rem; text-transform: uppercase; opacity: 0.5; border-bottom: 1px solid var(--border); }
+  td { border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.88rem; }
+  .rank { font-weight: 700; font-size: 1.1rem; }
+  .rank-1 { color: #ffd700; }
+  .rank-2 { color: #c0c0c0; }
+  .rank-3 { color: #cd7f32; }
+  .profit-up { color: var(--green); }
+  .profit-down { color: var(--red); }
+  .player-cell { display: flex; align-items: center; gap: 8px; }
+  .model-icon { width: 22px; height: 22px; border-radius: 6px; object-fit: contain; background: #222; flex-shrink: 0; }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-work { background: #1e3a2f; color: var(--green); }
+  .badge-gamble { background: #3a2e1e; color: var(--accent); }
+  .badge-sick { background: #3a1e1e; color: var(--red); }
+  .badge-loan { background: #3a2a1e; color: #ff9f40; }
+  .badge-hungry { background: #3a3a1e; color: #ffcc00; }
+  .badge-starved { background: #3a1010; color: #ff4444; }
+  .badge-win { background: #1e3a3a; color: #4fc3f7; }
+  .badge-lose { background: #3a1e1e; color: var(--red); }
+  .connecting {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 1.2rem; opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Gambler Arena</h1>
+  <div>
+    <span id="statusBadge" class="status-badge status-live">CONNECTING</span>
+    <span id="roundInfo" style="margin-left:12px;opacity:0.7"></span>
+  </div>
+</div>
+
+<div id="connectingMsg" class="connecting">Waiting for game data...</div>
+
+<div class="main" id="mainUI" style="display:none">
+  <div class="info-bar" id="infoBar"></div>
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+  <div class="standings">
+    <h2>Rankings</h2>
+    <table>
+      <thead><tr><th>#</th><th>Player</th><th>Status</th><th>Model</th><th>Assets</th><th>Profit</th><th>Work</th><th>Gamble</th><th>W/L</th></tr></thead>
+      <tbody id="standingsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#FF6384','#36A2EB','#FFCE56','#4BC0C0','#9966FF','#FF9F40','#7BC8A4','#E8A87C'];
+
+const STATE_URL = 'games/gambler/ui_state.json';
+
+function modelIcon(modelName) {
+  const n = (modelName || '').toLowerCase();
+  if (n.includes('deepseek')) return '../data/icon/deepseek.png';
+  if (n.includes('gpt') || n.includes('openai') || n.includes('o1') || n.includes('o3') || n.includes('o4')) return '../data/icon/openai.png';
+  if (n.includes('claude')) return '../data/icon/claude.png';
+  if (n.includes('qwen')) return '../data/icon/qwen.png';
+  if (n.includes('glm')) return '../data/icon/glm.png';
+  if (n.includes('kimi') || n.includes('moonshot')) return '../data/icon/kimi.png';
+  if (n.includes('doubao')) return '../data/icon/doubao.jpg';
+  if (n.includes('minimax')) return '../data/icon/minimax.png';
+  if (n.includes('xiaomi') || n.includes('mimo')) return '../data/icon/xiaomi.png';
+  if (n.includes('stepfun') || n.includes('step')) return '../data/icon/stepfun.png';
+  return null;
+}
+
+let chart = null;
+
+function buildChart(state) {
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chart) chart.destroy();
+
+  const names = state.player_names;
+  const traj = state.trajectories_with_start;
+  const players = state.players || [];
+
+  const datasets = names.map((name, i) => {
+    const p = players.find(pl => pl.name === name) || {};
+    return {
+      label: name,
+      data: (traj[name] || []).map(pt => ({x: pt.round, y: pt.assets})),
+      borderColor: COLORS[i % COLORS.length],
+      backgroundColor: COLORS[i % COLORS.length] + '22',
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      tension: 0.2,
+      fill: false,
+    };
+  });
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Round', color: '#888' },
+          min: 0,
+          max: state.game_config.max_rounds,
+          ticks: { stepSize: 1, color: '#666' },
+          grid: { color: '#1a1a2e' },
+        },
+        y: {
+          title: { display: true, text: 'Assets ($)', color: '#888' },
+          ticks: { color: '#666', callback: v => '$' + v.toLocaleString() },
+          grid: { color: '#1a1a2e' },
+        },
+      },
+      plugins: {
+        legend: {
+          labels: { color: '#c8c8d8', usePointStyle: true, padding: 20 },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': $' + ctx.parsed.y.toFixed(2),
+          },
+        },
+      },
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    },
+  });
+}
+
+function renderInfo(state) {
+  const cfg = state.game_config;
+  const ev = (cfg.win_probability * cfg.win_multiplier + (1-cfg.win_probability) * cfg.loss_multiplier).toFixed(2);
+  document.getElementById('infoBar').innerHTML = [
+    {l:'Round', v:`${state.current_round} / ${cfg.max_rounds}`, cls:'gold'},
+    {l:'Daily Wage', v:'$'+cfg.daily_wage},
+    {l:'Gamble Win%', v:(cfg.win_probability*100).toFixed(0)+'%'},
+    {l:'Win ×', v:cfg.win_multiplier+'x'},
+    {l:'Loss ×', v:cfg.loss_multiplier+'x'},
+    {l:'Gamble EV', v:ev+'x', cls:'gold'},
+  ].map(c => `<div class="info-card"><div class="label">${c.l}</div><div class="value ${c.cls||''}">${c.v}</div></div>`).join('');
+}
+
+function renderStandings(state) {
+  const ranked = [...(state.players||[])].sort((a,b) => b.current_assets - a.current_assets);
+  document.getElementById('standingsBody').innerHTML = ranked.map((p, i) => {
+    const profit = p.current_assets - p.initial_assets;
+    const sign = profit >= 0 ? '+' : '';
+    const profitCls = profit >= 0 ? 'profit-up' : 'profit-down';
+    const rankCls = i < 3 ? `rank-${i+1}` : '';
+    const wl = p.gamble_count > 0 ? `${p.gamble_wins}W/${p.gamble_losses}L` : '—';
+    const icon = modelIcon(p.model_name);
+    const iconHtml = icon ? `<img class="model-icon" src="${icon}" alt="" onerror="this.style.display='none'">` : '';
+    const bankrupt = p.bankrupt ? ' [BUST]' : '';
+    let statusHtml = '';
+    if (p.starved) {
+      statusHtml = '<span class="badge badge-starved">STARVED</span>';
+    } else if (p.hunger_streak > 0) {
+      statusHtml = `<span class="badge badge-hungry">HUNGRY ${p.hunger_streak}/3</span>`;
+    }
+    if (p.sick && p.loan_balance > 0) {
+      statusHtml += ` <span class="badge badge-sick">SICK</span> <span class="badge badge-loan">LOAN $${p.loan_balance.toFixed(1)}</span>`;
+    } else if (p.sick) {
+      statusHtml += ' <span class="badge badge-sick">SICK</span>';
+    } else if (p.loan_balance > 0) {
+      statusHtml += ` <span class="badge badge-loan">LOAN $${p.loan_balance.toFixed(1)}</span>`;
+    }
+    if (!statusHtml) statusHtml = '—';
+    return `<tr>
+      <td class="rank ${rankCls}">${i+1}</td>
+      <td><div class="player-cell">${iconHtml}<strong>${p.name}</strong>${bankrupt}</div></td>
+      <td>${statusHtml}</td>
+      <td style="opacity:0.55;font-size:0.8rem">${p.model_name}</td>
+      <td><strong>$${p.current_assets.toFixed(2)}</strong></td>
+      <td class="${profitCls}">${sign}$${profit.toFixed(2)}</td>
+      <td><span class="badge badge-work">${p.work_count}×</span></td>
+      <td><span class="badge badge-gamble">${p.gamble_count}×</span></td>
+      <td>${wl}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateStatus(state) {
+  const badge = document.getElementById('statusBadge');
+  const info = document.getElementById('roundInfo');
+  if (state.finished) {
+    badge.textContent = 'GAME OVER';
+    badge.className = 'status-badge status-over';
+    info.textContent = state.winner ? 'Winner: ' + state.winner : '';
+  } else {
+    badge.textContent = 'LIVE';
+    badge.className = 'status-badge status-live';
+    info.textContent = 'Round ' + state.current_round + ' / ' + state.game_config.max_rounds;
+  }
+}
+
+function render(state) {
+  document.getElementById('connectingMsg').style.display = 'none';
+  document.getElementById('mainUI').style.display = 'block';
+  buildChart(state);
+  renderInfo(state);
+  renderStandings(state);
+  updateStatus(state);
+}
+
+async function poll() {
+  try {
+    const resp = await fetch(STATE_URL + '?_=' + Date.now());
+    if (!resp.ok) throw new Error('no data');
+    const state = await resp.json();
+    render(state);
+  } catch(e) { /* keep polling */ }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
