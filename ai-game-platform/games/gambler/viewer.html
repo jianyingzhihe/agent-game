@@ -106,8 +106,6 @@
   .badge-loan { background: #3a2a1e; color: #ff9f40; }
   .badge-hungry { background: #3a3a1e; color: #ffcc00; }
   .badge-starved { background: #3a1010; color: #ff4444; }
-  .badge-study { background: #1e2a3a; color: #5b9bd5; }
-  .badge-wage { background: #1e3a3a; color: #4fc3f7; }
   .badge-win { background: #1e3a3a; color: #4fc3f7; }
   .badge-lose { background: #3a1e1e; color: var(--red); }
   .connecting {
@@ -230,8 +228,6 @@ function renderInfo(state) {
   document.getElementById('infoBar').innerHTML = [
     {l:'Round', v:`${state.current_round} / ${cfg.max_rounds}`, cls:'gold'},
     {l:'Daily Wage', v:'$'+cfg.daily_wage},
-    {l:'Food Cost', v:'$'+(cfg.food_cost||8)+'/day'},
-    {l:'Study', v:'$'+(cfg.study_cost||20)+' ×'+(cfg.study_duration||3)+'rd'},
     {l:'Gamble Win%', v:(cfg.win_probability*100).toFixed(0)+'%'},
     {l:'Win ×', v:cfg.win_multiplier+'x'},
     {l:'Loss ×', v:cfg.loss_multiplier+'x'},
@@ -255,12 +251,6 @@ function renderStandings(state) {
       statusHtml = '<span class="badge badge-starved">STARVED</span>';
     } else if (p.hunger_streak > 0) {
       statusHtml = `<span class="badge badge-hungry">HUNGRY ${p.hunger_streak}/3</span>`;
-    }
-    if (p.studying_remaining > 0) {
-      statusHtml += ` <span class="badge badge-study">STUDYING ${p.studying_remaining}r</span>`;
-    }
-    if (p.wage_multiplier > 1) {
-      statusHtml += ` <span class="badge badge-wage">×${p.wage_multiplier}</span>`;
     }
     if (p.sick && p.loan_balance > 0) {
       statusHtml += ` <span class="badge badge-sick">SICK</span> <span class="badge badge-loan">LOAN $${p.loan_balance.toFixed(1)}</span>`;

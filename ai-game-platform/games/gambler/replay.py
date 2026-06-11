@@ -86,8 +86,6 @@ def build_replay(state_json: dict, output_path: str | Path) -> Path:
   .badge-loan {{ background: #3a2a1e; color: #ff9f40; }}
   .badge-hungry {{ background: #3a3a1e; color: #ffcc00; }}
   .badge-starved {{ background: #3a1010; color: #ff4444; }}
-  .badge-study {{ background: #1e2a3a; color: #5b9bd5; }}
-  .badge-wage {{ background: #1e3a3a; color: #4fc3f7; }}
   .btn {{
     background: var(--accent); color: #000; border: none; padding: 10px 24px;
     border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer;
@@ -170,8 +168,6 @@ function roundLabel(n) {{
   const cards = [
     {{l:'Rounds', v:cfg.max_rounds}},
     {{l:'Daily Wage', v:'$'+cfg.daily_wage}},
-    {{l:'Food Cost', v:'$'+(cfg.food_cost||8)+'/day'}},
-    {{l:'Study', v:'$'+(cfg.study_cost||20)+' ×'+(cfg.study_duration||3)+'rd'}},
     {{l:'Gamble Win%', v:(cfg.win_probability*100).toFixed(0)+'%'}},
     {{l:'Win ×', v:cfg.win_multiplier+'x'}},
     {{l:'Loss ×', v:cfg.loss_multiplier+'x'}},
@@ -199,12 +195,6 @@ function roundLabel(n) {{
       statusHtml2 = '<span class="stat-badge badge-starved">STARVED</span>';
     }} else if (p.hunger_streak > 0) {{
       statusHtml2 = '<span class="stat-badge badge-hungry">HUNGRY '+p.hunger_streak+'/3</span>';
-    }}
-    if (p.studying_remaining > 0) {{
-      statusHtml2 += ' <span class="stat-badge badge-study">STUDYING '+p.studying_remaining+'r</span>';
-    }}
-    if (p.wage_multiplier > 1) {{
-      statusHtml2 += ' <span class="stat-badge badge-wage">×'+p.wage_multiplier+'</span>';
     }}
     if (p.sick && p.loan_balance > 0) {{
       statusHtml2 += ' <span class="stat-badge badge-sick">SICK</span> <span class="stat-badge badge-loan">LOAN $'+p.loan_balance.toFixed(1)+'</span>';
@@ -240,13 +230,21 @@ function roundLabel(n) {{
       const prevPt = pts.find(p => p.round === r-1);
       const before = prevPt ? prevPt.assets : STATE.game_config.initial_assets;
       const after = pt.assets;
-      const choice = pt.choice || 'WORK';
-      const result = pt.result || '—';
-      let resultStyle = 'color:#888';
-      if (result === 'WIN' || result === 'EARNED' || result === 'STUDY_COMPLETE') resultStyle = 'color:#4caf84';
-      else if (result === 'LOSE' || result === 'STARVED') resultStyle = 'color:#e0556a';
-      else if (choice === 'STUDY' || result === 'STUDY_START' || result === 'STUDYING') resultStyle = 'color:#5b9bd5';
-      else resultStyle = 'color:#888';
+      // Infer choice from asset change
+      let choice, result, resultStyle;
+      if (Math.abs(after - before - STATE.game_config.daily_wage) < 0.01) {{
+        choice = 'WORK';
+        result = '—';
+        resultStyle = 'color:#4caf84';
+      }} else if (after > before) {{
+        choice = 'GAMBLE';
+        result = 'WIN';
+        resultStyle = 'color:#4fc3f7';
+      }} else {{
+        choice = 'GAMBLE';
+        result = 'LOSE';
+        resultStyle = 'color:#e0556a';
+      }}
       rows.push('<tr><td>Round '+r+'</td><td><strong>'+name+'</strong></td>'+
         '<td>'+choice+'</td><td style="'+resultStyle+'">'+result+'</td>'+
         '<td>$'+before.toFixed(2)+'</td><td>$'+after.toFixed(2)+'</td></tr>');

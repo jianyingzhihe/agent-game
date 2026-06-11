@@ -1,60 +1,16 @@
 """Prompt templates for the Gambler game."""
 
-SYSTEM_PROMPT = """You are a gambler in a high-stakes competition. Here are the rules:
+SYSTEM_PROMPT = """You are a gambler in a high-stakes competition. Each round you face a critical choice:
 
-=== ECONOMY ===
-- You start with $50.
-- Daily wage (WORK): $10. This is safe and guaranteed.
-- Daily food cost: $5 (auto-deducted each round before your choice).
-- Net from working: $5/day after food.
+WORK — Earn a fixed daily wage. Safe and guaranteed.
+GAMBLE — Risk your wealth. Win and multiply assets; lose and lose big.
 
-=== GAMBLE ===
-- 40% chance to WIN: assets multiplied by 3.0x.
-- 60% chance to LOSE: assets multiplied by 0.3x (you keep 30%).
-- All gamblers in the same round share the same luck (same random roll).
-
-=== STUDY (self-improvement) ===
-- Pay tuition, then train for 4 rounds with ZERO income. Food ($5/day) still costs.
-- After completion, your daily wage DOUBLES permanently (stackable).
-- Tuition scales with your current wage level: $45 × current wage multiplier.
-  - 1st study (×1 wage): $45. Total cost ~$105 (tuition + food + lost wages). Payback ~10 rounds.
-  - 2nd study (×2 wage): $90. Total cost ~$190. Payback ~10 rounds.
-  - 3rd study (×4 wage): $180. Total cost ~$360. Payback ~9 rounds.
-- WARNING: If you go hungry during study, all progress is CANCELLED.
-- While studying, you are LOCKED — no decisions, no income, only food deducted.
-- If you choose STUDY but can't afford it, you fall back to WORK.
-
-=== MEDICAL DISASTER ===
-- At a RANDOM round between round 10 and round (max-5), ALL players get sick simultaneously.
-- This happens EXACTLY ONCE per game. After it strikes, you are safe — no more disasters.
-- Medical bill: $100 per person.
-- If you have $100+: pay directly from assets, no loan.
-- If you have less than $100: all your assets go to the bill, and the shortfall becomes a LOAN.
-- Loan terms: 20% interest, repaid over 20 rounds (auto-deducted before your choice each round).
-- Example: You have $30 when disaster hits. Shortfall $70 → loan $84, repays $4.20/round.
-  Food ($5) + loan ($4.20) = $9.20/day. Wage $10 - $9.20 = $0.80/day buffer. Survivable.
-- Example: You have $0 when disaster hits. Shortfall $100 → loan $120, repays $6.00/round.
-  Food ($5) + loan ($6.00) = $11.00/day. Wage $10 - $11.00 = -$1.00/day. You WILL die.
-- MORAL: Save at least $20-30 before the disaster, or you won't survive the loan.
-
-=== HUNGER ===
-- If you can't afford the $5 food cost: you go HUNGRY that day.
-- 3 consecutive hungry days = STARVATION DEATH (eliminated).
-- Hunger during study also cancels your study progress.
-
-=== TURN FLOW (each round, in order) ===
-1. Loan installment (if any) auto-deducted
-2. Medical disaster (if it strikes this round) applied to ALL players
-3. Food cost ($5) deducted
-4. Study progress advances (if studying)
-5. YOU choose: WORK, GAMBLE, or STUDY
-
-Your goal: finish with the MOST assets among all players. Plan ahead for the inevitable disaster, weigh risk vs. reward, and watch the leaderboard."""
+Your goal is to finish with the MOST assets among all players. Think carefully about expected value, risk, and your position on the leaderboard."""
 
 RESPONSE_FORMAT = """
 RESPONSE FORMAT — Reply with exactly these lines:
 REASON: <your reasoning — expected value calculation, risk assessment, leaderboard strategy>
-CHOICE: WORK or GAMBLE or STUDY
+CHOICE: WORK or GAMBLE
 """
 
 
@@ -77,33 +33,15 @@ def decision_prompt(
     spent_food: float = 0,
     spent_loan: float = 0,
     spent_medical: float = 0,
-    wage_multiplier: float = 1.0,
-    studying_remaining: int = 0,
-    study_cost: float = 20,
-    study_duration: int = 3,
-    disaster_warning: bool = False,
 ) -> str:
     """Build the decision prompt for a player's turn."""
 
-    effective_wage = daily_wage * wage_multiplier
     gamble_ev = assets * (win_probability * win_multiplier + (1 - win_probability) * loss_multiplier)
-    work_ev = assets + effective_wage
-    can_afford_study = assets >= study_cost
-    can_afford_food = assets >= food_cost
+    work_ev = assets + daily_wage
 
     lines = [
         f"## Round {round_num} / {max_rounds}",
         f"Player: {player_name}",
-        "",
-        "### Turn Flow (happens BEFORE your decision)",
-        "",
-        "  1. Loan installment (if any) is auto-deducted",
-        "  2. Medical disaster (if it strikes this round) is applied",
-        "  3. Daily food cost is deducted",
-        "  4. Study progress advances (if currently studying)",
-        "  5. YOU make your choice: WORK, GAMBLE, or STUDY",
-        "",
-        f"  → Everything above has ALREADY happened. Your current assets: ${assets:,.2f}",
         "",
         "### Your Status",
         f"Current assets: ${assets:,.2f}",
@@ -118,77 +56,40 @@ def decision_prompt(
     if spent_medical > 0:
         spent_items.append(f"Medical bill: -${spent_medical:,.2f}")
     if spent_items:
-        lines.append(f"This round's deductions: {' | '.join(spent_items)}")
+        lines.append(f"This round's spending: {' | '.join(spent_items)}")
     elif spent_food == 0 and hunger_streak > 0:
-        lines.append(f"This round: Could NOT afford food (${food_cost:,.2f}) — went HUNGRY (streak: {hunger_streak}/3, 3 = DEATH)")
+        lines.append(f"This round: Could NOT afford food (${food_cost:,.2f}) — went HUNGRY")
     else:
-        lines.append(f"This round's deductions: Food -${food_cost:,.2f}")
+        lines.append(f"This round's spending: Food -${food_cost:,.2f}")
 
-    # ---- Disaster warning ----
-    if disaster_warning:
-        lines.append("")
-        lines.append("!!! MEDICAL DISASTER is coming — ALL players will be charged $100 each at an unknown round. Stay liquid. !!!")
-
-    # ---- Hunger warning ----
+    # Hunger warning
     if hunger_streak >= 2:
         lines.append(f"!!! You have gone {hunger_streak} days without food. If you miss ONE more day, you STARVE TO DEATH !!!")
     elif hunger_streak >= 1:
         lines.append(f"Warning: You went hungry yesterday ({hunger_streak} day streak). 3 consecutive hungry days = DEATH.")
 
-    # ---- Study status ----
-    if studying_remaining > 0:
-        lines.append(f"You are currently STUDYING: {studying_remaining} round(s) remaining. You have NO income and still pay ${food_cost:,.0f}/day food.")
-        lines.append(f"  → If you go hungry during study, ALL progress is LOST.")
-    if wage_multiplier > 1.0:
-        lines.append(f"Wage upgraded: {wage_multiplier:.0f}x (completed {int(wage_multiplier).bit_length() - 1} course(s)). Your WORK earns ${effective_wage:,.0f}/day.")
-
-    # ---- Illness / loan status ----
+    # Illness / loan status
     if sick and loan_balance <= 0:
-        lines.append(f"You were SICK this round! Paid ${spent_medical:,.0f} medical bill from assets.")
+        lines.append("You were SICK this round and paid the medical bill from your assets.")
     if loan_balance > 0:
         lines.extend([
-            f"!!! OUTSTANDING LOAN: ${loan_balance:,.2f} !!!",
+            f"!!! You have an OUTSTANDING LOAN of ${loan_balance:,.2f} !!!",
             f"    Remaining installments: {loan_repay_remaining}",
-            f"    Each round, ${loan_balance / max(loan_repay_remaining, 1):,.2f} is auto-deducted before your choice.",
+            f"    One installment (${loan_balance / max(loan_repay_remaining, 1):,.2f}) is auto-deducted each round before your decision.",
         ])
 
     lines.extend([
         "",
         "### Game Parameters",
-        f"Food cost: ${food_cost:,.0f}/day (auto-deducted each round. 3 consecutive missed = DEATH)",
-        f"WORK: earn ${effective_wage:,.0f} (guaranteed, safe)" + (f" (base ${daily_wage:,.0f} × {wage_multiplier:.0f}x)" if wage_multiplier > 1.0 else ""),
-        f"GAMBLE: {win_probability:.0%} chance of {win_multiplier}x → ${assets * win_multiplier:,.2f} | {(1 - win_probability):.0%} chance of {loss_multiplier}x → ${assets * loss_multiplier:,.2f}",
-        "",
-    ])
-
-    # ---- STUDY section with affordability ----
-    if studying_remaining > 0:
-        lines.append(f"STUDY: You are already studying ({studying_remaining} rounds left). You CANNOT take another course.")
-    elif can_afford_study:
-        total_study_cost = study_cost + study_duration * food_cost + study_duration * effective_wage
-        lines.extend([
-            f"STUDY: You CAN afford this (have ${assets:,.0f}, need ${study_cost:,.0f}).",
-            f"  → Pay ${study_cost:,.0f} now. Then {study_duration} rounds with ZERO income.",
-            f"  → Food (${food_cost:,.0f}/day × {study_duration} = ${food_cost * study_duration:,.0f}) still deducted during study.",
-            f"  → Lost wages: ${effective_wage:,.0f}/day × {study_duration} = ${effective_wage * study_duration:,.0f}.",
-            f"  → Total real cost: ${total_study_cost:,.0f}. After completion: wage ${effective_wage:,.0f} → ${effective_wage * 2:,.0f}/day.",
-            f"  → Payback: ~{total_study_cost / effective_wage:.0f} rounds."
-            + (f"  Next study would cost ${study_cost * 2:,.0f}." if wage_multiplier > 1.0 else ""),
-        ])
-    else:
-        shortfall = study_cost - assets
-        lines.extend([
-            f"STUDY: You CANNOT afford this! Need ${study_cost:,.0f}, have ${assets:,.0f} (short ${shortfall:,.0f}).",
-            f"  → If you choose STUDY anyway, you will fall back to WORK instead.",
-        ])
-
-    lines.extend([
+        f"Daily food cost: ${food_cost:,.2f} (auto-deducted each round; 3 consecutive missed days = DEATH)",
+        f"Daily wage (WORK): ${daily_wage:,.2f}",
+        f"Win probability (GAMBLE): {win_probability:.0%}",
+        f"Win multiplier (GAMBLE): {win_multiplier}x  → assets become ${assets * win_multiplier:,.2f}",
+        f"Loss multiplier (GAMBLE): {loss_multiplier}x  → assets become ${assets * loss_multiplier:,.2f}",
         "",
         "### Expected Value Comparison",
-        f"WORK:    guaranteed ${work_ev:,.2f}  (+${effective_wage:,.0f})",
-        f"GAMBLE:  expected ${gamble_ev:,.2f}  (swing: ${assets * win_multiplier:,.0f} or ${assets * loss_multiplier:,.0f})",
-        f"STUDY:   invest ${study_cost:,.0f}, then {study_duration} rounds no income, then wage doubles forever" if can_afford_study else
-        f"STUDY:   N/A (cannot afford ${study_cost:,.0f})",
+        f"EV of WORK:    ${work_ev:,.2f}  (guaranteed)",
+        f"EV of GAMBLE:  ${gamble_ev:,.2f}  (risky)",
         "",
         "### Leaderboard",
         leaderboard,
@@ -203,7 +104,7 @@ def decision_prompt(
 
     lines.extend([
         "",
-        "Your choice. WORK, GAMBLE, or STUDY?",
+        "Your choice. WORK or GAMBLE?",
         RESPONSE_FORMAT,
     ])
 
