@@ -39,22 +39,41 @@ SYSTEM_PROMPT = """You are a gambler in a high-stakes competition. Here are the 
 
 === HUNGER ===
 - If you can't afford the $5 food cost: you go HUNGRY that day.
+- Going hungry costs SAN (sanity) and HP (health) — see below.
 - 3 consecutive hungry days = STARVATION DEATH (eliminated).
 - Hunger during study also cancels your study progress.
+
+=== SANITY (SAN) & HEALTH (HP) ===
+- You start with SAN 100 and HP 100. Both are vital — losing either to 0 eliminates you.
+- Each day you go HUNGRY: lose SAN-15 and HP-10.
+- SAN = 0 → INSANITY (eliminated). HP = 0 → DEATH (eliminated).
+- HP below 30: you may suffer a MINOR ILLNESS each round, costing $20 and losing SAN-20.
+- SAN and HP do NOT recover on their own — you must buy goods/medicine.
+
+=== BUY GOODS (SAN recovery) ===
+- Cost: $5. Restores SAN +20 (max 100). No other benefit.
+- Use when your SAN is dangerously low to avoid insanity.
+- Cannot afford? Falls back to WORK instead.
+
+=== BUY MEDICINE (HP recovery) ===
+- Cost: $15. Restores HP +30 (max 100). No other benefit.
+- Use when your HP is dangerously low to avoid minor illness or death.
+- Cannot afford? Falls back to WORK instead.
 
 === TURN FLOW (each round, in order) ===
 1. Loan installment (if any) auto-deducted
 2. Medical disaster (if it strikes this round) applied to ALL players
-3. Food cost ($5) deducted
+3. Food cost ($5) deducted; if can't pay → hungry → lose SAN/HP
+3b. Minor illness check (if HP < 30, pay $20 and lose SAN-20)
 4. Study progress advances (if studying)
-5. YOU choose: WORK, GAMBLE, or STUDY
+5. YOU choose: WORK, GAMBLE, STUDY, BUY_GOODS, or BUY_MEDICINE
 
-Your goal: finish with the MOST assets among all players. Plan ahead for the inevitable disaster, weigh risk vs. reward, and watch the leaderboard."""
+Your goal: finish with the MOST assets among all players. Plan ahead for the inevitable disaster, manage your SAN and HP, weigh risk vs. reward, and watch the leaderboard."""
 
 RESPONSE_FORMAT = """
 RESPONSE FORMAT — Reply with exactly these lines:
-REASON: <your reasoning — expected value calculation, risk assessment, leaderboard strategy>
-CHOICE: WORK or GAMBLE or STUDY
+REASON: <your reasoning — expected value calculation, risk assessment, SAN/HP status, leaderboard strategy>
+CHOICE: WORK or GAMBLE or STUDY or BUY_GOODS or BUY_MEDICINE
 """
 
 
@@ -82,6 +101,15 @@ def decision_prompt(
     study_cost: float = 45,
     study_duration: int = 3,
     disaster_warning: bool = False,
+    san: float = 100.0,
+    hp: float = 100.0,
+    san_hunger_penalty: float = 15.0,
+    hp_hunger_penalty: float = 10.0,
+    minor_illness_threshold: float = 30.0,
+    goods_cost: float = 5.0,
+    goods_san_restore: float = 20.0,
+    medicine_cost: float = 15.0,
+    medicine_hp_restore: float = 30.0,
 ) -> str:
     """Build the decision prompt for a player's turn."""
 
@@ -90,6 +118,8 @@ def decision_prompt(
     work_ev = assets + effective_wage
     can_afford_study = assets >= study_cost
     food_reserve = study_duration * food_cost  # cash needed for food during study
+    can_afford_goods = assets >= goods_cost
+    can_afford_medicine = assets >= medicine_cost
 
     lines = [
         f"## Round {round_num} / {max_rounds}",
@@ -99,15 +129,31 @@ def decision_prompt(
         "",
         "  1. Loan installment (if any) is auto-deducted",
         "  2. Medical disaster (if it strikes this round) is applied",
-        "  3. Daily food cost is deducted",
+        "  3. Daily food cost is deducted (if can't pay → HUNGRY, lose SAN/HP)",
+        "  3b. Minor illness check (if HP < threshold)",
         "  4. Study progress advances (if currently studying)",
-        "  5. YOU make your choice: WORK, GAMBLE, or STUDY",
+        "  5. YOU make your choice: WORK, GAMBLE, STUDY, BUY_GOODS, BUY_MEDICINE",
         "",
         f"  → Everything above has ALREADY happened. Your current assets: ${assets:,.2f}",
         "",
         "### Your Status",
         f"Current assets: ${assets:,.2f}",
+        f"SAN (Sanity): {san:.0f}/100  |  HP (Health): {hp:.0f}/100",
     ]
+
+    # ---- SAN/HP warnings ----
+    if san <= 30:
+        lines.append(f"!!! SANITY CRITICAL ({san:.0f}/100) !!! At 0 you go INSANE and are eliminated. BUY_GOODS costs ${goods_cost:.0f} and restores +{goods_san_restore:.0f} SAN.")
+    elif san <= 50:
+        lines.append(f"Warning: SAN is low ({san:.0f}/100). Going hungry costs -{san_hunger_penalty:.0f} SAN. BUY_GOODS costs ${goods_cost:.0f} → +{goods_san_restore:.0f} SAN.")
+
+    if hp <= minor_illness_threshold + 10:
+        if hp <= minor_illness_threshold:
+            lines.append(f"!!! HP CRITICAL ({hp:.0f}/100) !!! Below {minor_illness_threshold:.0f} threshold — you may suffer minor illness ($20, SAN-20). BUY_MEDICINE costs ${medicine_cost:.0f} and restores +{medicine_hp_restore:.0f} HP.")
+        else:
+            lines.append(f"Warning: HP is low ({hp:.0f}/100). If it drops below {minor_illness_threshold:.0f}, you may get a minor illness. BUY_MEDICINE: ${medicine_cost:.0f} → +{medicine_hp_restore:.0f} HP.")
+    elif hp <= 50:
+        lines.append(f"Warning: HP is moderate ({hp:.0f}/100). Going hungry costs -{hp_hunger_penalty:.0f} HP.")
 
     # ---- Spending breakdown for this round ----
     spent_items = []
@@ -137,7 +183,7 @@ def decision_prompt(
 
     # ---- Study status ----
     if studying_remaining > 0:
-        lines.append(f"You are currently STUDYING: {studying_remaining} round(s) remaining. You have NO income and still pay ${food_cost:,.0f}/day food.")
+        lines.append(f"You are currently STUDYING: {studying_remaining} round(s) remaining. You have NO income and still pay ${food_cost:.0f}/day food.")
         lines.append(f"  → If you go hungry during study, ALL progress is LOST.")
     if wage_bonus > 0:
         lines.append(f"Wage upgraded: +${wage_bonus:,.0f}/day (completed {int(wage_bonus / daily_wage)} course(s)). Your WORK earns ${effective_wage:,.0f}/day.")
@@ -155,8 +201,8 @@ def decision_prompt(
     lines.extend([
         "",
         "### Game Parameters",
-        f"Food cost: ${food_cost:,.0f}/day (auto-deducted each round. 3 consecutive missed = DEATH)",
-        f"WORK: earn ${effective_wage:,.0f} (guaranteed, safe)" + (f" (base ${daily_wage:,.0f} + ${wage_bonus:,.0f} bonus)" if wage_bonus > 0 else ""),
+        f"Food cost: ${food_cost:.0f}/day (auto-deducted each round. 3 consecutive missed = DEATH)",
+        f"WORK: earn ${effective_wage:.0f} (guaranteed, safe)" + (f" (base ${daily_wage:.0f} + ${wage_bonus:.0f} bonus)" if wage_bonus > 0 else ""),
         f"GAMBLE: {win_probability:.0%} chance of {win_multiplier}x → ${assets * win_multiplier:,.2f} | {(1 - win_probability):.0%} chance of {loss_multiplier}x → ${assets * loss_multiplier:,.2f}",
         "",
     ])
@@ -180,13 +226,33 @@ def decision_prompt(
             f"  → If you choose STUDY anyway, you will fall back to WORK instead.",
         ])
 
+    # ---- BUY_GOODS section ----
+    if can_afford_goods:
+        new_san = min(100.0, san + goods_san_restore)
+        lines.append(f"BUY_GOODS: Cost ${goods_cost:.0f}. SAN: {san:.0f} → {new_san:.0f}/100 (+{goods_san_restore:.0f}). No other benefit.")
+    else:
+        lines.append(f"BUY_GOODS: Cannot afford (need ${goods_cost:.0f}). Falls back to WORK.")
+
+    # ---- BUY_MEDICINE section ----
+    if can_afford_medicine:
+        new_hp = min(100.0, hp + medicine_hp_restore)
+        lines.append(f"BUY_MEDICINE: Cost ${medicine_cost:.0f}. HP: {hp:.0f} → {new_hp:.0f}/100 (+{medicine_hp_restore:.0f}). No other benefit.")
+    else:
+        lines.append(f"BUY_MEDICINE: Cannot afford (need ${medicine_cost:.0f}). Falls back to WORK.")
+
+    # ---- Minor illness info ----
+    if hp < minor_illness_threshold:
+        lines.append(f"!!! HP ({hp:.0f}) is below {minor_illness_threshold:.0f}: you may suffer MINOR ILLNESS each round ($20 cost, SAN-20).")
+
     lines.extend([
         "",
         "### Expected Value Comparison",
-        f"WORK:    guaranteed ${work_ev:,.2f}  (+${effective_wage:,.0f})",
-        f"GAMBLE:  expected ${gamble_ev:,.2f}  (swing: ${assets * win_multiplier:,.0f} or ${assets * loss_multiplier:,.0f})",
-        f"STUDY:   invest ${study_cost:,.0f}, {study_duration}rd no income → wage +${daily_wage:,.0f}/day forever" if can_afford_study else
-        f"STUDY:   N/A (cannot afford ${study_cost:,.0f} + ${food_reserve:,.0f} food = ${study_cost + food_reserve:,.0f})",
+        f"WORK:        guaranteed ${work_ev:,.2f}  (+${effective_wage:.0f})",
+        f"GAMBLE:      expected ${gamble_ev:,.2f}  (swing: ${assets * win_multiplier:,.0f} or ${assets * loss_multiplier:,.0f})",
+        f"STUDY:       invest ${study_cost:,.0f}, {study_duration}rd no income → wage +${daily_wage:,.0f}/day forever" if can_afford_study else
+        f"STUDY:       N/A (cannot afford ${study_cost:,.0f} + ${food_reserve:,.0f} food = ${study_cost + food_reserve:,.0f})",
+        f"BUY_GOODS:   spend ${goods_cost:.0f} → SAN +{goods_san_restore:.0f}" + (" (affordable)" if can_afford_goods else " (CANNOT AFFORD)"),
+        f"BUY_MEDICINE: spend ${medicine_cost:.0f} → HP +{medicine_hp_restore:.0f}" + (" (affordable)" if can_afford_medicine else " (CANNOT AFFORD)"),
         "",
         "### Leaderboard",
         leaderboard,
@@ -201,7 +267,7 @@ def decision_prompt(
 
     lines.extend([
         "",
-        "Your choice. WORK, GAMBLE, or STUDY?",
+        "Your choice. WORK, GAMBLE, STUDY, BUY_GOODS, or BUY_MEDICINE?",
         RESPONSE_FORMAT,
     ])
 

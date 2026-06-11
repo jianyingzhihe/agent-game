@@ -20,6 +20,23 @@ illness_cost: 100         # Medical bill per player ($). Hits ALL players once a
 loan_interest_rate: 0.2   # Interest on medical loan (20%)
 loan_repay_rounds: 20     # Rounds to repay medical loan
 
+# ---- Sanity & Health ----
+initial_san: 100          # Starting SAN (sanity) per player
+initial_hp: 100           # Starting HP (health) per player
+san_hunger_penalty: 15    # SAN lost per hungry day
+hp_hunger_penalty: 10     # HP lost per hungry day
+
+# ---- Minor Illness ----
+minor_illness_hp_threshold: 30   # HP below this triggers minor illness check each round
+minor_illness_cost: 20           # $ cost per minor illness episode
+minor_illness_san_loss: 20       # SAN lost per minor illness episode
+
+# ---- Self-Care ----
+goods_cost: 5             # Cost to buy goods (restores SAN)
+goods_san_restore: 20     # SAN restored per BUY_GOODS action
+medicine_cost: 15         # Cost to buy medicine (restores HP)
+medicine_hp_restore: 30   # HP restored per BUY_MEDICINE action
+
 # ---- Game ----
 max_rounds: 30            # Total rounds per game
 temperature: 0.7          # LLM temperature (creativity vs consistency)

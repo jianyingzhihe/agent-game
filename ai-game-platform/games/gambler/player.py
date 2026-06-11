@@ -1,4 +1,4 @@
-"""Gambler player with asset tracking and decision history."""
+"""Gambler player with asset tracking, sanity/health, and decision history."""
 
 from typing import List
 
@@ -7,7 +7,7 @@ from core.models.base import ModelInterface
 
 
 class GamblerPlayer(Player):
-    """A gambler who chooses between working, gambling, and studying each round."""
+    """A gambler who chooses between working, gambling, studying, and self-care each round."""
 
     def __init__(self, name: str, model: ModelInterface, assets: float = 100, persona: str = ""):
         super().__init__(name, model, persona)
@@ -19,14 +19,21 @@ class GamblerPlayer(Player):
         self.gamble_wins = 0
         self.gamble_losses = 0
         self.study_count = 0      # times study completed
+        self.goods_count = 0      # times bought goods
+        self.medicine_count = 0   # times bought medicine
         self.bankrupt = False
         self.starved = False
+        self.insane = False       # SAN reached 0
         # Illness / loan state
         self.sick = False
         self.loan_balance = 0.0
         self.loan_repay_remaining = 0
         # Hunger state
         self.hunger_streak = 0  # consecutive rounds without food
+        # Sanity & Health
+        self.san = 100.0
+        self.hp = 100.0
+        self.minor_illness_count = 0  # times fallen ill from low HP
         # Study state
         self.wage_bonus = 0.0  # starts at $0, +$10 per completed study
         self.studying_remaining = 0  # rounds left in current study (0 = not studying)
@@ -46,10 +53,16 @@ class GamblerPlayer(Player):
                 self.gamble_wins += 1
             elif result == "LOSE":
                 self.gamble_losses += 1
+        elif choice == "BUY_GOODS":
+            self.goods_count += 1
+        elif choice == "BUY_MEDICINE":
+            self.medicine_count += 1
         # STUDY doesn't count as work or gamble
         self.assets = assets_after
         if self.assets <= 0:
             self.bankrupt = True
+
+    # ---- Study ----
 
     def start_study(self, cost: float, duration: int) -> dict:
         """Begin a study course. Pay cost, set remaining duration."""
@@ -82,8 +95,10 @@ class GamblerPlayer(Player):
     def effective_wage(self) -> float:
         return 10.0 + self.wage_bonus  # base wage + bonus from study
 
+    # ---- Medical Disaster ----
+
     def apply_illness(self, cost: float, interest_rate: float, repay_rounds: int):
-        """Player gets sick. Pay if possible, otherwise take a loan."""
+        """Player gets sick (medical disaster). Pay if possible, otherwise take a loan."""
         self.sick = True
         if self.assets >= cost:
             self.assets -= cost
@@ -113,25 +128,83 @@ class GamblerPlayer(Player):
             self.bankrupt = True
         return actual
 
-    def pay_food(self, cost: float) -> dict:
-        """Pay daily food cost. Returns event dict if went hungry or starved."""
+    # ---- Food, SAN & HP ----
+
+    def pay_food(self, cost: float, san_hunger: float, hp_hunger: float) -> dict:
+        """Pay daily food cost. If can't pay: go hungry, lose SAN & HP.
+        Returns event dict."""
         if self.assets >= cost:
             self.assets -= cost
             self.hunger_streak = 0  # ate today, reset
             return {"event": "fed", "paid": cost}
         else:
-            # Can't afford food — study is also interrupted
+            # Can't afford food — go hungry
             self.hunger_streak += 1
-            result: dict = {"event": "hungry", "streak": self.hunger_streak, "shortfall": cost - self.assets}
+            self.san = max(0.0, self.san - san_hunger)
+            self.hp = max(0.0, self.hp - hp_hunger)
+            result: dict = {"event": "hungry", "streak": self.hunger_streak,
+                            "shortfall": cost - self.assets,
+                            "san_lost": san_hunger, "hp_lost": hp_hunger,
+                            "san": self.san, "hp": self.hp}
+
             if self.hunger_streak >= 3:
                 self.starved = True
                 self.bankrupt = True
                 result = {"event": "starved", "streak": self.hunger_streak}
+            if self.san <= 0:
+                self.insane = True
+                self.bankrupt = True
+                result["insane"] = True
+                result.setdefault("event", "insane")
+            if self.hp <= 0:
+                self.bankrupt = True
+                result["hp_death"] = True
+                result.setdefault("event", "hp_death")
+
             # Hunger cancels study
             if self.studying_remaining > 0:
                 self.studying_remaining = 0
                 result["study_cancelled"] = True
             return result
+
+    # ---- Minor Illness (triggered by low HP) ----
+
+    def check_minor_illness(self, threshold: float, cost: float, san_loss: float) -> dict | None:
+        """If HP < threshold, trigger a minor illness: pay cost, lose SAN.
+        Returns event dict or None."""
+        if self.hp >= threshold:
+            return None
+        self.minor_illness_count += 1
+        self.san = max(0.0, self.san - san_loss)
+        actual_cost = min(cost, self.assets)
+        self.assets -= actual_cost
+        if self.assets <= 0:
+            self.bankrupt = True
+        if self.san <= 0:
+            self.insane = True
+            self.bankrupt = True
+        return {"event": "minor_illness", "hp": self.hp, "hp_threshold": threshold,
+                "cost": actual_cost, "san_lost": san_loss, "san": self.san}
+
+    # ---- Goods & Medicine ----
+
+    def buy_goods(self, cost: float, san_restore: float) -> dict:
+        """Buy goods to restore sanity. Returns event dict."""
+        if self.assets < cost:
+            return {"event": "goods_fail", "reason": "cant_afford"}
+        self.assets -= cost
+        self.san = min(100.0, self.san + san_restore)
+        return {"event": "goods_bought", "cost": cost, "san_restored": san_restore, "san": self.san}
+
+    def buy_medicine(self, cost: float, hp_restore: float) -> dict:
+        """Buy medicine to restore health. Returns event dict."""
+        if self.assets < cost:
+            return {"event": "medicine_fail", "reason": "cant_afford"}
+        self.assets -= cost
+        self.hp = min(100.0, self.hp + hp_restore)
+        return {"event": "medicine_bought", "cost": cost, "hp_restored": hp_restore, "hp": self.hp}
+
+    # ----
 
     @property
     def profit(self) -> float:
